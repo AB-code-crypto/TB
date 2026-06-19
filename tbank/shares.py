@@ -121,9 +121,79 @@ if __name__ == "__main__":
     from grpc import aio
     from t_tech.invest import AsyncClient
 
-    def print_shares(shares: list[TBankShare], limit: int = 30) -> None:
-        print(f"Всего акций получено: {len(shares)}")
+
+    def print_shares_summary(shares: list[TBankShare]) -> None:
+        total = len(shares)
+
+        api_trade_available = sum(1 for share in shares if share.api_trade_available_flag)
+        buy_available = sum(1 for share in shares if share.buy_available_flag)
+        sell_available = sum(1 for share in shares if share.sell_available_flag)
+
+        rub = sum(1 for share in shares if share.currency == "RUB")
+        usd = sum(1 for share in shares if share.currency == "USD")
+        eur = sum(1 for share in shares if share.currency == "EUR")
+
+        moex = sum(1 for share in shares if share.real_exchange == "REAL_EXCHANGE_MOEX")
+        dealer = sum(1 for share in shares if share.real_exchange == "REAL_EXCHANGE_DEALER")
+        rts = sum(1 for share in shares if share.real_exchange == "REAL_EXCHANGE_RTS")
+        unspecified_exchange = sum(
+            1 for share in shares if share.real_exchange == "REAL_EXCHANGE_UNSPECIFIED"
+        )
+
+        normal_trading = sum(
+            1
+            for share in shares
+            if share.trading_status == "SECURITY_TRADING_STATUS_NORMAL_TRADING"
+        )
+        break_in_trading = sum(
+            1
+            for share in shares
+            if share.trading_status == "SECURITY_TRADING_STATUS_BREAK_IN_TRADING"
+        )
+        not_available = sum(
+            1
+            for share in shares
+            if share.trading_status
+            == "SECURITY_TRADING_STATUS_NOT_AVAILABLE_FOR_TRADING"
+        )
+
+        qualified_only = sum(1 for share in shares if share.for_qual_investor_flag)
+        weekend_available = sum(1 for share in shares if share.weekend_flag)
+        liquid = sum(1 for share in shares if share.liquidity_flag)
+
+        print("Сводка по акциям:")
+        print(f"  Всего акций:                 {total}")
         print()
+        print("Доступность:")
+        print(f"  Доступны через API:           {api_trade_available}")
+        print(f"  Доступны на покупку:          {buy_available}")
+        print(f"  Доступны на продажу:          {sell_available}")
+        print()
+        print("Валюты:")
+        print(f"  RUB:                          {rub}")
+        print(f"  USD:                          {usd}")
+        print(f"  EUR:                          {eur}")
+        print()
+        print("Биржи / реальные площадки:")
+        print(f"  MOEX:                         {moex}")
+        print(f"  RTS / СПБ:                    {rts}")
+        print(f"  DEALER / OTC:                 {dealer}")
+        print(f"  UNSPECIFIED:                  {unspecified_exchange}")
+        print()
+        print("Торговые статусы:")
+        print(f"  NORMAL_TRADING:               {normal_trading}")
+        print(f"  BREAK_IN_TRADING:             {break_in_trading}")
+        print(f"  NOT_AVAILABLE_FOR_TRADING:    {not_available}")
+        print()
+        print("Дополнительные признаки:")
+        print(f"  Только для квалов:            {qualified_only}")
+        print(f"  Доступны в выходные:          {weekend_available}")
+        print(f"  liquidity_flag=True:          {liquid}")
+        print()
+
+
+    def print_shares(shares: list[TBankShare], limit: int = 30) -> None:
+        print_shares_summary(shares)
 
         if not shares:
             print("Список акций пуст.")
