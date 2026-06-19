@@ -146,7 +146,7 @@ if __name__ == "__main__":
     from t_tech.invest import AsyncClient
 
     # Для проверки твоей покупки SBER:
-    TEST_ORDER_ID = "80411824954"
+    TEST_ORDER_ID = "80412370163"
     TEST_ORDER_ID_TYPE = orders_pb2.ORDER_ID_TYPE_EXCHANGE
 
 
@@ -176,19 +176,26 @@ if __name__ == "__main__":
 
         commission = state.executed_commission + state.service_commission
 
-        if state.direction == "ORDER_DIRECTION_BUY":
+        print()
+        print(f"gross_amount:            {state.total_order_amount:.2f}")
+        print(f"commission:              {commission:.2f}")
+
+        if state.lots_executed == 0:
+            print("cash_effect:             0.00")
+            print("note:                    заявка не исполнялась")
+        elif state.direction == "ORDER_DIRECTION_BUY":
             cash_amount = state.total_order_amount + commission
-            cash_amount_label = "cash_spent"
+            print(f"cash_spent:              {cash_amount:.2f}")
         elif state.direction == "ORDER_DIRECTION_SELL":
             cash_amount = state.total_order_amount - commission
-            cash_amount_label = "cash_received"
+            print(f"cash_received:           {cash_amount:.2f}")
         else:
             raise RuntimeError(f"Неизвестное направление заявки: {state.direction}")
 
         print()
         print(f"gross_amount:            {state.total_order_amount:.2f}")
         print(f"commission:              {commission:.2f}")
-        print(f"{cash_amount_label}:     {cash_amount:.2f}")
+        print(f"{cash_amount_label}:        {cash_amount:.2f}")
         print(f"initial_order_price:     {state.initial_order_price:.2f}")
         print(f"executed_order_price:    {state.executed_order_price:.2f}")
         print(f"average_position_price:  {state.average_position_price:.2f}")

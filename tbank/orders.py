@@ -298,7 +298,7 @@ if __name__ == "__main__":
 
     TEST_INSTRUMENT_ID = "SBER_TQBR"
     TEST_QUANTITY_LOTS = 1
-    TEST_LIMIT_PRICE = Decimal("313.00")
+    TEST_LIMIT_PRICE = Decimal("300.00")
 
 
     def print_order_result(result: TBankOrderResult) -> None:
