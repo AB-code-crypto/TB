@@ -53,6 +53,16 @@ CANDLE_INTERVALS: dict[str, int] = {
 }
 
 
+GROWTH_PERIOD_UNITS: dict[str, str] = {
+    "секунд": "seconds",
+    "минут": "minutes",
+    "часов": "hours",
+    "дней": "days",
+    "недель": "weeks",
+    "месяцев": "months",
+}
+
+
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
@@ -101,6 +111,9 @@ class MainWindow(QMainWindow):
         self.candle_limit_edit = QLineEdit("50")
 
         self.growth_percent_edit = QLineEdit("1.00")
+        self.growth_period_value_edit = QLineEdit("30")
+        self.growth_period_unit_combo = QComboBox()
+        self.growth_period_unit_combo.addItems(list(GROWTH_PERIOD_UNITS.keys()))
         self.take_profit_percent_edit = QLineEdit("1.00")
         self.stop_loss_percent_edit = QLineEdit("1.00")
         self.bot_money_limit_edit = QLineEdit("10000.00")
@@ -244,6 +257,10 @@ class MainWindow(QMainWindow):
         strategy_layout.addWidget(QLabel("Рост для покупки, %:"), 0, 0)
         strategy_layout.addWidget(self.growth_percent_edit, 0, 1)
 
+        strategy_layout.addWidget(QLabel("Период роста:"), 0, 4)
+        strategy_layout.addWidget(self.growth_period_value_edit, 0, 5)
+        strategy_layout.addWidget(self.growth_period_unit_combo, 0, 6)
+
         strategy_layout.addWidget(QLabel("Продать при прибыли, %:"), 0, 2)
         strategy_layout.addWidget(self.take_profit_percent_edit, 0, 3)
 
@@ -340,6 +357,21 @@ class MainWindow(QMainWindow):
         if "growth_percent" in settings:
             self.growth_percent_edit.setText(settings["growth_percent"])
 
+        if "growth_period_value" in settings:
+            self.growth_period_value_edit.setText(settings["growth_period_value"])
+
+        if "growth_period_unit" in settings:
+            growth_period_unit_index = self.growth_period_unit_combo.findText(
+                settings["growth_period_unit"]
+            )
+
+            if growth_period_unit_index == -1:
+                raise ValueError(
+                    f"Сохранённая единица периода роста не найдена: {settings['growth_period_unit']}"
+                )
+
+            self.growth_period_unit_combo.setCurrentIndex(growth_period_unit_index)
+
         if "take_profit_percent" in settings:
             self.take_profit_percent_edit.setText(settings["take_profit_percent"])
 
@@ -397,6 +429,8 @@ class MainWindow(QMainWindow):
             "candle_limit": self.candle_limit_edit.text().strip(),
             "candle_interval": self.candle_interval_combo.currentText(),
             "growth_percent": self.growth_percent_edit.text().strip(),
+            "growth_period_value": self.growth_period_value_edit.text().strip(),
+            "growth_period_unit": self.growth_period_unit_combo.currentText(),
             "take_profit_percent": self.take_profit_percent_edit.text().strip(),
             "stop_loss_percent": self.stop_loss_percent_edit.text().strip(),
             "bot_money_limit": self.bot_money_limit_edit.text().strip(),
@@ -407,24 +441,6 @@ class MainWindow(QMainWindow):
             "manual_buy_amount": self.manual_buy_amount_edit.text().strip(),
             "manual_sell_lots": self.manual_sell_lots_edit.text().strip(),
         }
-
-        if not settings["token"]:
-            QMessageBox.warning(self, "Ошибка сохранения", "Токен не может быть пустым.")
-            return
-
-        if not settings["account_id"]:
-            QMessageBox.warning(
-                self,
-                "Ошибка сохранения",
-                "Account ID не может быть пустым.",
-            )
-            return
-
-        try:
-            self._get_strategy_settings()
-        except ValueError as error:
-            QMessageBox.warning(self, "Ошибка настроек стратегии", str(error))
-            return
 
         save_app_settings(settings)
         save_selected_shares(list(self.selected_shares_by_uid.values()))
@@ -468,6 +484,8 @@ class MainWindow(QMainWindow):
         self.candle_interval_combo.setCurrentText("1 минута")
 
         self.growth_percent_edit.setText("1.00")
+        self.growth_period_value_edit.setText("30")
+        self.growth_period_unit_combo.setCurrentText("секунд")
         self.take_profit_percent_edit.setText("1.00")
         self.stop_loss_percent_edit.setText("1.00")
         self.bot_money_limit_edit.setText("10000.00")
@@ -526,11 +544,25 @@ class MainWindow(QMainWindow):
 
         return value
 
-    def _get_strategy_settings(self) -> dict[str, Decimal]:
+    def _get_strategy_settings(self) -> dict[str, object]:
         growth_percent = self._parse_decimal_field(
             self.growth_percent_edit,
             "Рост для покупки, %",
         )
+        growth_period_raw = self.growth_period_value_edit.text().strip()
+
+        try:
+            growth_period_value = int(growth_period_raw)
+        except ValueError as error:
+            raise ValueError("Период роста должен быть целым числом.") from error
+
+        if growth_period_value <= 0:
+            raise ValueError("Период роста должен быть больше 0.")
+
+        growth_period_unit = self.growth_period_unit_combo.currentText()
+
+        if growth_period_unit not in GROWTH_PERIOD_UNITS:
+            raise ValueError(f"Некорректная единица периода роста: {growth_period_unit}")
         take_profit_percent = self._parse_decimal_field(
             self.take_profit_percent_edit,
             "Продать при прибыли, %",
@@ -558,6 +590,8 @@ class MainWindow(QMainWindow):
 
         return {
             "growth_percent": growth_percent,
+            "growth_period_value": growth_period_value,
+            "growth_period_unit": growth_period_unit,
             "take_profit_percent": take_profit_percent,
             "stop_loss_percent": stop_loss_percent,
             "bot_money_limit": bot_money_limit,
