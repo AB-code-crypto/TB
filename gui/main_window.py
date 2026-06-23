@@ -28,6 +28,7 @@ from t_tech.invest import AsyncClient
 from t_tech.invest.grpc import marketdata_pb2
 
 from gui.worker import AsyncTaskWorker
+from gui.growth_monitor_worker import GrowthMonitorWorker
 from bd.settings_storage import (
     load_app_settings,
     load_selected_shares,
@@ -98,6 +99,8 @@ class MainWindow(QMainWindow):
 
         self.threads: list[QThread] = []
         self.workers: list[AsyncTaskWorker] = []
+        self.growth_monitor_thread: QThread | None = None
+        self.growth_monitor_worker: GrowthMonitorWorker | None = None
 
         self.all_shares: list[TBankShare] = []
         self.available_shares: list[TBankShare] = []
@@ -654,6 +657,22 @@ class MainWindow(QMainWindow):
         }
 
     def start_robot_placeholder(self) -> None:
+        if self.robot_is_running:
+            QMessageBox.information(
+                self,
+                "Мониторинг уже запущен",
+                "Мониторинг уже работает.",
+            )
+            return
+
+        if not self.token_edit.text().strip():
+            QMessageBox.warning(
+                self,
+                "Ошибка",
+                "Токен не задан.",
+            )
+            return
+
         if not self.selected_shares_by_uid:
             QMessageBox.warning(
                 self,
@@ -668,21 +687,12 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Ошибка настроек стратегии", str(error))
             return
 
-        if (
-            not self.allow_buy_checkbox.isChecked()
-            and not self.allow_sell_checkbox.isChecked()
-        ):
-            QMessageBox.warning(
-                self,
-                "Ошибка режима робота",
-                "Покупки и продажи отключены. Робот не сможет ничего делать.",
-            )
-            return
+        self.save_current_state()
 
         self.robot_is_running = True
-        self.robot_status_label.setText("Робот: включен")
+        self.robot_status_label.setText("Робот: мониторинг включен")
 
-        self._log("Робот включен.")
+        self._log("Запуск мониторинга роста.")
         self._log(f"Рабочих акций: {len(self.selected_shares_by_uid)}")
         self._log(f"Рост для покупки: {settings['growth_percent']}%")
         self._log(
@@ -690,22 +700,57 @@ class MainWindow(QMainWindow):
         )
         self._log(f"Интервал проверки: {settings['scan_interval_seconds']} сек.")
         self._log(f"Макс. возраст цены: {settings['max_price_age_seconds']} сек.")
-        self._log(f"Хранение снимков цен: {settings['price_snapshot_retention_days']} дней.")
-        self._log(f"Take profit: {settings['take_profit_percent']}%")
-        self._log(f"Stop loss: {settings['stop_loss_percent']}%")
-        self._log(f"Лимит денег для бота: {settings['bot_money_limit']} ₽")
         self._log(
-            f"Покупки разрешены: {'да' if self.allow_buy_checkbox.isChecked() else 'нет'}"
+            f"Хранение снимков цен: {settings['price_snapshot_retention_days']} дней."
         )
-        self._log(
-            f"Продажи разрешены: {'да' if self.allow_sell_checkbox.isChecked() else 'нет'}"
-        )
-        self._log("Автологика пока не подключена. GUI фиксирует настройки.")
+        self._log("Торговые заявки пока не отправляются.")
+
+        thread = QThread(self)
+        worker = GrowthMonitorWorker()
+        worker.moveToThread(thread)
+
+        thread.started.connect(worker.run)
+
+        worker.log_message.connect(self._log)
+        worker.finished.connect(self._on_growth_monitor_finished)
+        worker.failed.connect(self._on_growth_monitor_failed)
+
+        worker.finished.connect(thread.quit)
+        worker.failed.connect(thread.quit)
+
+        thread.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(self._cleanup_growth_monitor_worker)
+
+        self.growth_monitor_thread = thread
+        self.growth_monitor_worker = worker
+
+        thread.start()
 
     def stop_robot_placeholder(self) -> None:
+        if self.growth_monitor_worker is None:
+            self.robot_is_running = False
+            self.robot_status_label.setText("Робот: выключен")
+            self._log("Мониторинг не был запущен.")
+            return
+
+        self.robot_status_label.setText("Робот: мониторинг останавливается")
+        self._log("Остановка мониторинга запрошена.")
+        self.growth_monitor_worker.stop()
+
+    def _on_growth_monitor_finished(self) -> None:
         self.robot_is_running = False
         self.robot_status_label.setText("Робот: выключен")
-        self._log("Робот выключен.")
+        self._log("Мониторинг остановлен.")
+
+    def _on_growth_monitor_failed(self, error_text: str) -> None:
+        self.robot_is_running = False
+        self.robot_status_label.setText("Робот: ошибка мониторинга")
+        self._log(f"Ошибка мониторинга: {error_text}")
+
+    def _cleanup_growth_monitor_worker(self) -> None:
+        self.growth_monitor_thread = None
+        self.growth_monitor_worker = None
 
     def _get_manual_instrument_id(self) -> str:
         instrument_id = self.manual_instrument_id_edit.text().strip()
