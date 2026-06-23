@@ -1,4 +1,5 @@
 import os
+from decimal import Decimal, InvalidOperation
 from collections.abc import Callable, Coroutine
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -66,6 +67,7 @@ class MainWindow(QMainWindow):
         self.all_shares: list[TBankShare] = []
         self.available_shares: list[TBankShare] = []
         self.selected_shares_by_uid: dict[str, TBankShare] = {}
+        self.robot_is_running = False
 
         self.setWindowTitle("TBank Robot — GUI v0.1")
         self.resize(1450, 900)
@@ -78,6 +80,18 @@ class MainWindow(QMainWindow):
         self.candle_instrument_edit = QLineEdit("SBER_TQBR")
         self.candle_days_edit = QLineEdit("1")
         self.candle_limit_edit = QLineEdit("50")
+
+        self.growth_percent_edit = QLineEdit("1.00")
+        self.take_profit_percent_edit = QLineEdit("1.00")
+        self.stop_loss_percent_edit = QLineEdit("1.00")
+        self.bot_money_limit_edit = QLineEdit("10000.00")
+
+        self.robot_status_label = QLabel("Робот: выключен")
+        self.manual_mode_checkbox = QCheckBox("Ручной режим")
+
+        self.manual_instrument_id_edit = QLineEdit("SBER_TQBR")
+        self.manual_buy_amount_edit = QLineEdit("10000.00")
+        self.manual_sell_lots_edit = QLineEdit("1")
 
         self.qualified_investor_checkbox = QCheckBox("Клиент — квалифицированный инвестор")
         self.qualified_investor_checkbox.setChecked(False)
@@ -189,6 +203,50 @@ class MainWindow(QMainWindow):
         candles_button = QPushButton("Получить свечи")
         candles_button.clicked.connect(self.load_candles)
         controls_layout.addWidget(candles_button, 9, 0, 1, 4)
+        strategy_controls = QGroupBox("Настройки стратегии и режим")
+        strategy_layout = QGridLayout(strategy_controls)
+
+        strategy_layout.addWidget(QLabel("Рост для покупки, %:"), 0, 0)
+        strategy_layout.addWidget(self.growth_percent_edit, 0, 1)
+
+        strategy_layout.addWidget(QLabel("Продать при прибыли, %:"), 0, 2)
+        strategy_layout.addWidget(self.take_profit_percent_edit, 0, 3)
+
+        strategy_layout.addWidget(QLabel("Продать при убытке, %:"), 1, 0)
+        strategy_layout.addWidget(self.stop_loss_percent_edit, 1, 1)
+
+        strategy_layout.addWidget(QLabel("Лимит денег для бота, ₽:"), 1, 2)
+        strategy_layout.addWidget(self.bot_money_limit_edit, 1, 3)
+
+        start_robot_button = QPushButton("Включить робота")
+        stop_robot_button = QPushButton("Выключить робота")
+
+        start_robot_button.clicked.connect(self.start_robot_placeholder)
+        stop_robot_button.clicked.connect(self.stop_robot_placeholder)
+
+        strategy_layout.addWidget(self.robot_status_label, 2, 0)
+        strategy_layout.addWidget(start_robot_button, 2, 1)
+        strategy_layout.addWidget(stop_robot_button, 2, 2)
+        strategy_layout.addWidget(self.manual_mode_checkbox, 2, 3)
+
+        strategy_layout.addWidget(QLabel("Ручной инструмент:"), 3, 0)
+        strategy_layout.addWidget(self.manual_instrument_id_edit, 3, 1)
+
+        strategy_layout.addWidget(QLabel("Сумма покупки, ₽:"), 3, 2)
+        strategy_layout.addWidget(self.manual_buy_amount_edit, 3, 3)
+
+        strategy_layout.addWidget(QLabel("Объём продажи, лоты:"), 4, 0)
+        strategy_layout.addWidget(self.manual_sell_lots_edit, 4, 1)
+
+        manual_buy_button = QPushButton("Купить вручную")
+        manual_sell_button = QPushButton("Продать вручную")
+
+        manual_buy_button.clicked.connect(self.manual_buy_placeholder)
+        manual_sell_button.clicked.connect(self.manual_sell_placeholder)
+
+        strategy_layout.addWidget(manual_buy_button, 4, 2)
+        strategy_layout.addWidget(manual_sell_button, 4, 3)
+
 
         self.accounts_table.cellDoubleClicked.connect(self.select_account_from_table)
         self.apply_checked_shares_button.clicked.connect(
@@ -214,6 +272,7 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.log_edit, "Лог")
 
         root_layout.addWidget(controls)
+        root_layout.addWidget(strategy_controls)
         root_layout.addWidget(self.tabs)
 
         self.setCentralWidget(root)
@@ -241,6 +300,179 @@ class MainWindow(QMainWindow):
         self.shares_filters_label.setText(
             self._get_shares_filter_text(self.qualified_investor_checkbox.isChecked())
         )
+
+    def _parse_decimal_field(self, line_edit: QLineEdit, field_name: str) -> Decimal:
+        raw_value = line_edit.text().strip().replace(",", ".")
+
+        if not raw_value:
+            raise ValueError(f"{field_name}: поле не может быть пустым.")
+
+        try:
+            value = Decimal(raw_value)
+        except InvalidOperation as error:
+            raise ValueError(f"{field_name}: некорректное число.") from error
+
+        return value
+
+    def _get_strategy_settings(self) -> dict[str, Decimal]:
+        growth_percent = self._parse_decimal_field(
+            self.growth_percent_edit,
+            "Рост для покупки, %",
+        )
+        take_profit_percent = self._parse_decimal_field(
+            self.take_profit_percent_edit,
+            "Продать при прибыли, %",
+        )
+        stop_loss_percent = self._parse_decimal_field(
+            self.stop_loss_percent_edit,
+            "Продать при убытке, %",
+        )
+        bot_money_limit = self._parse_decimal_field(
+            self.bot_money_limit_edit,
+            "Лимит денег для бота",
+        )
+
+        if growth_percent <= 0:
+            raise ValueError("Рост для покупки должен быть больше 0.")
+
+        if take_profit_percent <= 0:
+            raise ValueError("Процент прибыли должен быть больше 0.")
+
+        if stop_loss_percent <= 0:
+            raise ValueError("Процент убытка должен быть больше 0.")
+
+        if bot_money_limit <= 0:
+            raise ValueError("Лимит денег для бота должен быть больше 0.")
+
+        return {
+            "growth_percent": growth_percent,
+            "take_profit_percent": take_profit_percent,
+            "stop_loss_percent": stop_loss_percent,
+            "bot_money_limit": bot_money_limit,
+        }
+
+    def start_robot_placeholder(self) -> None:
+        if not self.selected_shares_by_uid:
+            QMessageBox.warning(
+                self,
+                "Ошибка",
+                "Рабочий список акций пуст. Сначала выберите акции.",
+            )
+            return
+
+        try:
+            settings = self._get_strategy_settings()
+        except ValueError as error:
+            QMessageBox.warning(self, "Ошибка настроек стратегии", str(error))
+            return
+
+        self.robot_is_running = True
+        self.robot_status_label.setText("Робот: включен")
+
+        self._log("Робот включен.")
+        self._log(f"Рабочих акций: {len(self.selected_shares_by_uid)}")
+        self._log(f"Рост для покупки: {settings['growth_percent']}%")
+        self._log(f"Take profit: {settings['take_profit_percent']}%")
+        self._log(f"Stop loss: {settings['stop_loss_percent']}%")
+        self._log(f"Лимит денег для бота: {settings['bot_money_limit']} ₽")
+        self._log("Автологика пока не подключена. GUI фиксирует настройки.")
+
+    def stop_robot_placeholder(self) -> None:
+        self.robot_is_running = False
+        self.robot_status_label.setText("Робот: выключен")
+        self._log("Робот выключен.")
+
+    def _get_manual_instrument_id(self) -> str:
+        instrument_id = self.manual_instrument_id_edit.text().strip()
+
+        if not instrument_id:
+            raise ValueError("Ручной инструмент не может быть пустым.")
+
+        return instrument_id
+
+    def manual_buy_placeholder(self) -> None:
+        if self.robot_is_running:
+            QMessageBox.warning(
+                self,
+                "Ошибка",
+                "Для ручной сделки сначала выключите робота.",
+            )
+            return
+
+        if not self.manual_mode_checkbox.isChecked():
+            QMessageBox.warning(
+                self,
+                "Ошибка",
+                "Для ручной сделки включите ручной режим.",
+            )
+            return
+
+        try:
+            instrument_id = self._get_manual_instrument_id()
+            buy_amount = self._parse_decimal_field(
+                self.manual_buy_amount_edit,
+                "Сумма покупки",
+            )
+        except ValueError as error:
+            QMessageBox.warning(self, "Ошибка ручной покупки", str(error))
+            return
+
+        if buy_amount <= 0:
+            QMessageBox.warning(
+                self,
+                "Ошибка ручной покупки",
+                "Сумма покупки должна быть больше 0.",
+            )
+            return
+
+        self._log(
+            f"Ручная покупка подготовлена: instrument_id={instrument_id}, "
+            f"сумма={buy_amount} ₽."
+        )
+        self._log("Реальная отправка заявки пока не подключена.")
+
+    def manual_sell_placeholder(self) -> None:
+        if self.robot_is_running:
+            QMessageBox.warning(
+                self,
+                "Ошибка",
+                "Для ручной сделки сначала выключите робота.",
+            )
+            return
+
+        if not self.manual_mode_checkbox.isChecked():
+            QMessageBox.warning(
+                self,
+                "Ошибка",
+                "Для ручной сделки включите ручной режим.",
+            )
+            return
+
+        try:
+            instrument_id = self._get_manual_instrument_id()
+            sell_lots_raw = self.manual_sell_lots_edit.text().strip()
+            sell_lots = int(sell_lots_raw)
+        except ValueError as error:
+            QMessageBox.warning(
+                self,
+                "Ошибка ручной продажи",
+                f"Объём продажи должен быть целым числом лотов. {error}",
+            )
+            return
+
+        if sell_lots <= 0:
+            QMessageBox.warning(
+                self,
+                "Ошибка ручной продажи",
+                "Объём продажи должен быть больше 0.",
+            )
+            return
+
+        self._log(
+            f"Ручная продажа подготовлена: instrument_id={instrument_id}, "
+            f"лоты={sell_lots}."
+        )
+        self._log("Реальная отправка заявки пока не подключена.")
 
     def _get_token(self) -> str:
         token = self.token_edit.text().strip()
