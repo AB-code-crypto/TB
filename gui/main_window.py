@@ -7,6 +7,7 @@ from typing import Any
 from dotenv import load_dotenv
 from PySide6.QtCore import Qt, QThread
 from PySide6.QtWidgets import (
+    QButtonGroup,
     QCheckBox,
     QComboBox,
     QGridLayout,
@@ -17,6 +18,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QPushButton,
+    QRadioButton,
     QPlainTextEdit,
     QTableWidget,
     QTableWidgetItem,
@@ -59,7 +61,14 @@ GROWTH_PERIOD_UNITS: dict[str, str] = {
     "часов": "hours",
     "дней": "days",
     "недель": "weeks",
-    "месяцев": "months",
+}
+
+
+GROWTH_PERIOD_STARTS: dict[str, str] = {
+    "часа": "hour",
+    "дня": "day",
+    "недели": "week",
+    "месяца": "month",
 }
 
 
@@ -114,6 +123,18 @@ class MainWindow(QMainWindow):
         self.growth_period_value_edit = QLineEdit("30")
         self.growth_period_unit_combo = QComboBox()
         self.growth_period_unit_combo.addItems(list(GROWTH_PERIOD_UNITS.keys()))
+
+        self.growth_mode_rolling_radio = QRadioButton("За последние")
+        self.growth_mode_period_start_radio = QRadioButton("С начала")
+        self.growth_mode_rolling_radio.setChecked(True)
+
+        self.growth_mode_group = QButtonGroup(self)
+        self.growth_mode_group.addButton(self.growth_mode_rolling_radio)
+        self.growth_mode_group.addButton(self.growth_mode_period_start_radio)
+
+        self.growth_period_start_combo = QComboBox()
+        self.growth_period_start_combo.addItems(list(GROWTH_PERIOD_STARTS.keys()))
+        self.growth_period_start_combo.setCurrentText("дня")
         self.take_profit_percent_edit = QLineEdit("1.00")
         self.stop_loss_percent_edit = QLineEdit("1.00")
         self.bot_money_limit_edit = QLineEdit("10000.00")
@@ -257,9 +278,12 @@ class MainWindow(QMainWindow):
         strategy_layout.addWidget(QLabel("Рост для покупки, %:"), 0, 0)
         strategy_layout.addWidget(self.growth_percent_edit, 0, 1)
 
-        strategy_layout.addWidget(QLabel("Период роста:"), 0, 4)
+        strategy_layout.addWidget(self.growth_mode_rolling_radio, 0, 4)
         strategy_layout.addWidget(self.growth_period_value_edit, 0, 5)
         strategy_layout.addWidget(self.growth_period_unit_combo, 0, 6)
+
+        strategy_layout.addWidget(self.growth_mode_period_start_radio, 1, 4)
+        strategy_layout.addWidget(self.growth_period_start_combo, 1, 5, 1, 2)
 
         strategy_layout.addWidget(QLabel("Продать при прибыли, %:"), 0, 2)
         strategy_layout.addWidget(self.take_profit_percent_edit, 0, 3)
@@ -372,6 +396,28 @@ class MainWindow(QMainWindow):
 
             self.growth_period_unit_combo.setCurrentIndex(growth_period_unit_index)
 
+        if "growth_mode" in settings:
+            if settings["growth_mode"] == "period_start":
+                self.growth_mode_period_start_radio.setChecked(True)
+            elif settings["growth_mode"] == "rolling":
+                self.growth_mode_rolling_radio.setChecked(True)
+            else:
+                raise ValueError(
+                    f"Сохранённый режим расчёта роста не найден: {settings['growth_mode']}"
+                )
+
+        if "growth_period_start" in settings:
+            growth_period_start_index = self.growth_period_start_combo.findText(
+                settings["growth_period_start"]
+            )
+
+            if growth_period_start_index == -1:
+                raise ValueError(
+                    f"Сохранённая точка начала расчёта роста не найдена: {settings['growth_period_start']}"
+                )
+
+            self.growth_period_start_combo.setCurrentIndex(growth_period_start_index)
+
         if "take_profit_percent" in settings:
             self.take_profit_percent_edit.setText(settings["take_profit_percent"])
 
@@ -431,6 +477,12 @@ class MainWindow(QMainWindow):
             "growth_percent": self.growth_percent_edit.text().strip(),
             "growth_period_value": self.growth_period_value_edit.text().strip(),
             "growth_period_unit": self.growth_period_unit_combo.currentText(),
+            "growth_mode": (
+                "rolling"
+                if self.growth_mode_rolling_radio.isChecked()
+                else "period_start"
+            ),
+            "growth_period_start": self.growth_period_start_combo.currentText(),
             "take_profit_percent": self.take_profit_percent_edit.text().strip(),
             "stop_loss_percent": self.stop_loss_percent_edit.text().strip(),
             "bot_money_limit": self.bot_money_limit_edit.text().strip(),
@@ -549,20 +601,46 @@ class MainWindow(QMainWindow):
             self.growth_percent_edit,
             "Рост для покупки, %",
         )
-        growth_period_raw = self.growth_period_value_edit.text().strip()
 
-        try:
-            growth_period_value = int(growth_period_raw)
-        except ValueError as error:
-            raise ValueError("Период роста должен быть целым числом.") from error
+        growth_mode = (
+            "rolling"
+            if self.growth_mode_rolling_radio.isChecked()
+            else "period_start"
+        )
 
-        if growth_period_value <= 0:
-            raise ValueError("Период роста должен быть больше 0.")
+        growth_period_value: int | None = None
+        growth_period_unit: str | None = None
+        growth_period_start: str | None = None
 
-        growth_period_unit = self.growth_period_unit_combo.currentText()
+        if growth_mode == "rolling":
+            growth_period_raw = self.growth_period_value_edit.text().strip()
 
-        if growth_period_unit not in GROWTH_PERIOD_UNITS:
-            raise ValueError(f"Некорректная единица периода роста: {growth_period_unit}")
+            try:
+                growth_period_value = int(growth_period_raw)
+            except ValueError as error:
+                raise ValueError("Период роста должен быть целым числом.") from error
+
+            if growth_period_value <= 0:
+                raise ValueError("Период роста должен быть больше 0.")
+
+            growth_period_unit = self.growth_period_unit_combo.currentText()
+
+            if growth_period_unit not in GROWTH_PERIOD_UNITS:
+                raise ValueError(
+                    f"Некорректная единица периода роста: {growth_period_unit}"
+                )
+
+        elif growth_mode == "period_start":
+            growth_period_start = self.growth_period_start_combo.currentText()
+
+            if growth_period_start not in GROWTH_PERIOD_STARTS:
+                raise ValueError(
+                    f"Некорректная точка начала расчёта роста: {growth_period_start}"
+                )
+
+        else:
+            raise ValueError(f"Некорректный режим расчёта роста: {growth_mode}")
+
         take_profit_percent = self._parse_decimal_field(
             self.take_profit_percent_edit,
             "Продать при прибыли, %",
@@ -590,8 +668,10 @@ class MainWindow(QMainWindow):
 
         return {
             "growth_percent": growth_percent,
+            "growth_mode": growth_mode,
             "growth_period_value": growth_period_value,
             "growth_period_unit": growth_period_unit,
+            "growth_period_start": growth_period_start,
             "take_profit_percent": take_profit_percent,
             "stop_loss_percent": stop_loss_percent,
             "bot_money_limit": bot_money_limit,
