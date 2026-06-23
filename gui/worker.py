@@ -1,5 +1,6 @@
 import asyncio
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable, Coroutine
+from typing import Any
 
 from PySide6.QtCore import QObject, Signal, Slot
 
@@ -8,7 +9,7 @@ class AsyncTaskWorker(QObject):
     finished = Signal(object)
     failed = Signal(str)
 
-    def __init__(self, task_factory: Callable[[], Awaitable[object]]) -> None:
+    def __init__(self, task_factory: Callable[[], Coroutine[Any, Any, object]]) -> None:
         super().__init__()
         self.task_factory = task_factory
 

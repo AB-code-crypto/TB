@@ -31,7 +31,7 @@ from tbank.candles import TBankCandle, get_candles
 from tbank.last_prices import TBankLastPrice, get_last_prices_batched
 from tbank.positions import TBankPortfolioPosition, get_portfolio_positions
 
-CANDLE_INTERVALS = {
+CANDLE_INTERVALS: dict[str, int] = {
     "1 минута": marketdata_pb2.CANDLE_INTERVAL_1_MIN,
     "5 минут": marketdata_pb2.CANDLE_INTERVAL_5_MIN,
     "15 минут": marketdata_pb2.CANDLE_INTERVAL_15_MIN,
@@ -70,7 +70,7 @@ class MainWindow(QMainWindow):
         self.candle_days_edit = QLineEdit("1")
         self.candle_limit_edit = QLineEdit("50")
         self.candle_interval_combo = QComboBox()
-        self.candle_interval_combo.addItems(CANDLE_INTERVALS.keys())
+        self.candle_interval_combo.addItems(list(CANDLE_INTERVALS.keys()))
 
         self.accounts_table = QTableWidget()
         self.money_table = QTableWidget()
