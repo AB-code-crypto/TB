@@ -291,15 +291,13 @@ class MainWindow(QMainWindow):
         strategy_layout.addWidget(QLabel("Лимит денег для бота, ₽:"), 1, 2)
         strategy_layout.addWidget(self.bot_money_limit_edit, 1, 3)
 
-        start_robot_button = QPushButton("Включить робота")
-        stop_robot_button = QPushButton("Выключить робота")
-
-        start_robot_button.clicked.connect(self.start_robot_placeholder)
-        stop_robot_button.clicked.connect(self.stop_robot_placeholder)
+        self.robot_toggle_button = QPushButton("Включить мониторинг")
+        self.robot_toggle_button.setCheckable(True)
+        self.robot_toggle_button.toggled.connect(self.toggle_robot_monitoring)
+        self._set_robot_visual_state("stopped")
 
         strategy_layout.addWidget(self.robot_status_label, 2, 0)
-        strategy_layout.addWidget(start_robot_button, 2, 1)
-        strategy_layout.addWidget(stop_robot_button, 2, 2)
+        strategy_layout.addWidget(self.robot_toggle_button, 2, 1, 1, 2)
         strategy_layout.addWidget(self.manual_mode_checkbox, 2, 3)
 
         strategy_layout.addWidget(QLabel("Ручной инструмент:"), 3, 0)
@@ -528,6 +526,7 @@ class MainWindow(QMainWindow):
 
         self.robot_is_running = False
         self.robot_status_label.setText("Робот: выключен")
+        self._set_robot_visual_state("stopped")
 
         self.selected_shares_by_uid.clear()
         self.refresh_selected_shares_table()
@@ -658,6 +657,7 @@ class MainWindow(QMainWindow):
 
     def start_robot_placeholder(self) -> None:
         if self.robot_is_running:
+            self._set_robot_visual_state("running")
             QMessageBox.information(
                 self,
                 "Мониторинг уже запущен",
@@ -666,6 +666,7 @@ class MainWindow(QMainWindow):
             return
 
         if not self.token_edit.text().strip():
+            self._set_robot_visual_state("stopped")
             QMessageBox.warning(
                 self,
                 "Ошибка",
@@ -674,6 +675,7 @@ class MainWindow(QMainWindow):
             return
 
         if not self.selected_shares_by_uid:
+            self._set_robot_visual_state("stopped")
             QMessageBox.warning(
                 self,
                 "Ошибка",
@@ -684,13 +686,14 @@ class MainWindow(QMainWindow):
         try:
             settings = self._get_strategy_settings()
         except ValueError as error:
+            self._set_robot_visual_state("stopped")
             QMessageBox.warning(self, "Ошибка настроек стратегии", str(error))
             return
 
         self.save_current_state()
 
         self.robot_is_running = True
-        self.robot_status_label.setText("Робот: мониторинг включен")
+        self._set_robot_visual_state("running")
 
         self._log("Запуск мониторинга роста.")
         self._log(f"Рабочих акций: {len(self.selected_shares_by_uid)}")
@@ -730,23 +733,146 @@ class MainWindow(QMainWindow):
     def stop_robot_placeholder(self) -> None:
         if self.growth_monitor_worker is None:
             self.robot_is_running = False
-            self.robot_status_label.setText("Робот: выключен")
+            self._set_robot_visual_state("stopped")
             self._log("Мониторинг не был запущен.")
             return
 
-        self.robot_status_label.setText("Робот: мониторинг останавливается")
+        self._set_robot_visual_state("stopping")
         self._log("Остановка мониторинга запрошена.")
         self.growth_monitor_worker.stop()
 
     def _on_growth_monitor_finished(self) -> None:
         self.robot_is_running = False
-        self.robot_status_label.setText("Робот: выключен")
+        self._set_robot_visual_state("stopped")
         self._log("Мониторинг остановлен.")
 
     def _on_growth_monitor_failed(self, error_text: str) -> None:
         self.robot_is_running = False
-        self.robot_status_label.setText("Робот: ошибка мониторинга")
+        self._set_robot_visual_state("error")
         self._log(f"Ошибка мониторинга: {error_text}")
+
+    def toggle_robot_monitoring(self, checked: bool) -> None:
+        if checked:
+            self.start_robot_placeholder()
+        else:
+            self.stop_robot_placeholder()
+
+    def _set_robot_visual_state(self, state: str) -> None:
+        if not hasattr(self, "robot_toggle_button"):
+            return
+
+        self.robot_toggle_button.blockSignals(True)
+
+        if state == "running":
+            self.robot_is_running = True
+            self.robot_status_label.setText("Робот: мониторинг включён")
+            self.robot_status_label.setStyleSheet(
+                "font-weight: bold; color: #0b6b20;"
+            )
+            self.robot_toggle_button.setChecked(True)
+            self.robot_toggle_button.setEnabled(True)
+            self.robot_toggle_button.setText("Мониторинг включён")
+            self.robot_toggle_button.setToolTip(
+                "Мониторинг работает. Нажмите, чтобы остановить."
+            )
+            self.robot_toggle_button.setStyleSheet(
+                """
+                QPushButton {
+                    background-color: #c8f7c5;
+                    color: #0b4f19;
+                    font-weight: bold;
+                    border: 1px solid #6fbd6b;
+                    border-radius: 5px;
+                    padding: 6px 12px;
+                }
+                QPushButton:hover {
+                    background-color: #b7efb1;
+                }
+                """
+            )
+
+        elif state == "stopping":
+            self.robot_status_label.setText("Робот: мониторинг останавливается")
+            self.robot_status_label.setStyleSheet(
+                "font-weight: bold; color: #8a5a00;"
+            )
+            self.robot_toggle_button.setChecked(True)
+            self.robot_toggle_button.setEnabled(False)
+            self.robot_toggle_button.setText("Остановка мониторинга...")
+            self.robot_toggle_button.setToolTip("Идёт остановка мониторинга.")
+            self.robot_toggle_button.setStyleSheet(
+                """
+                QPushButton {
+                    background-color: #fff0b3;
+                    color: #6b4a00;
+                    font-weight: bold;
+                    border: 1px solid #d6b656;
+                    border-radius: 5px;
+                    padding: 6px 12px;
+                }
+                """
+            )
+
+        elif state == "error":
+            self.robot_status_label.setText("Робот: ошибка мониторинга")
+            self.robot_status_label.setStyleSheet(
+                "font-weight: bold; color: #8a1f11;"
+            )
+            self.robot_toggle_button.setChecked(False)
+            self.robot_toggle_button.setEnabled(True)
+            self.robot_toggle_button.setText("Ошибка. Включить снова")
+            self.robot_toggle_button.setToolTip(
+                "Мониторинг остановлен из-за ошибки. Нажмите, чтобы запустить снова."
+            )
+            self.robot_toggle_button.setStyleSheet(
+                """
+                QPushButton {
+                    background-color: #ffd6d1;
+                    color: #7a1a10;
+                    font-weight: bold;
+                    border: 1px solid #d68178;
+                    border-radius: 5px;
+                    padding: 6px 12px;
+                }
+                QPushButton:hover {
+                    background-color: #ffc4bd;
+                }
+                """
+            )
+
+        elif state == "stopped":
+            self.robot_is_running = False
+            self.robot_status_label.setText("Робот: выключен")
+            self.robot_status_label.setStyleSheet(
+                "font-weight: bold; color: #555555;"
+            )
+            self.robot_toggle_button.setChecked(False)
+            self.robot_toggle_button.setEnabled(True)
+            self.robot_toggle_button.setText("Включить мониторинг")
+            self.robot_toggle_button.setToolTip(
+                "Мониторинг выключен. Нажмите, чтобы включить."
+            )
+            self.robot_toggle_button.setStyleSheet(
+                """
+                QPushButton {
+                    background-color: #eeeeee;
+                    color: #222222;
+                    font-weight: bold;
+                    border: 1px solid #999999;
+                    border-radius: 5px;
+                    padding: 6px 12px;
+                }
+                QPushButton:hover {
+                    background-color: #e0e0e0;
+                }
+                """
+            )
+
+        else:
+            self.robot_toggle_button.blockSignals(False)
+            raise ValueError(f"Неизвестное визуальное состояние робота: {state}")
+
+        self.robot_toggle_button.blockSignals(False)
 
     def _cleanup_growth_monitor_worker(self) -> None:
         self.growth_monitor_thread = None
