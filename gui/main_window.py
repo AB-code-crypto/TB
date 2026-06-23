@@ -28,6 +28,12 @@ from t_tech.invest import AsyncClient
 from t_tech.invest.grpc import marketdata_pb2
 
 from gui.worker import AsyncTaskWorker
+from bd.settings_storage import (
+    load_app_settings,
+    load_selected_shares,
+    save_app_settings,
+    save_selected_shares,
+)
 from tbank.accounts import TBankAccount, get_accounts
 from tbank.active_orders import TBankActiveOrder, get_active_orders
 from tbank.balance import PortfolioBalance, get_balance
@@ -61,12 +67,24 @@ class MainWindow(QMainWindow):
         if "INVEST_ACCOUNT_ID" in os.environ:
             initial_account_id = os.environ["INVEST_ACCOUNT_ID"]
 
+        saved_settings = load_app_settings()
+
+        if "token" in saved_settings:
+            initial_token = saved_settings["token"]
+
+        if "account_id" in saved_settings:
+            initial_account_id = saved_settings["account_id"]
+
         self.threads: list[QThread] = []
         self.workers: list[AsyncTaskWorker] = []
 
         self.all_shares: list[TBankShare] = []
         self.available_shares: list[TBankShare] = []
-        self.selected_shares_by_uid: dict[str, TBankShare] = {}
+        saved_selected_shares = load_selected_shares()
+        self.selected_shares_by_uid: dict[str, TBankShare] = {
+            share.uid: share
+            for share in saved_selected_shares
+        }
         self.robot_is_running = False
 
         self.setWindowTitle("TBank Robot — GUI v0.1")
@@ -101,6 +119,7 @@ class MainWindow(QMainWindow):
 
         self.candle_interval_combo = QComboBox()
         self.candle_interval_combo.addItems(list(CANDLE_INTERVALS.keys()))
+        self._apply_saved_settings(saved_settings)
 
         self.accounts_table = QTableWidget()
         self.money_table = QTableWidget()
@@ -128,6 +147,7 @@ class MainWindow(QMainWindow):
         self._log(
             f"Account ID: {self.account_id_edit.text().strip() if self.account_id_edit.text().strip() else 'не задан'}"
         )
+        self._log(f"Сохранённых рабочих акций загружено: {len(self.selected_shares_by_uid)}")
 
     def _build_ui(self) -> None:
         root = QWidget()
@@ -247,6 +267,10 @@ class MainWindow(QMainWindow):
         strategy_layout.addWidget(manual_buy_button, 4, 2)
         strategy_layout.addWidget(manual_sell_button, 4, 3)
 
+        save_state_button = QPushButton("Сохранить настройки")
+        save_state_button.clicked.connect(self.save_current_state)
+        strategy_layout.addWidget(save_state_button, 5, 0, 1, 4)
+
 
         self.accounts_table.cellDoubleClicked.connect(self.select_account_from_table)
         self.apply_checked_shares_button.clicked.connect(
@@ -276,6 +300,106 @@ class MainWindow(QMainWindow):
         root_layout.addWidget(self.tabs)
 
         self.setCentralWidget(root)
+
+    def _apply_saved_settings(self, settings: dict[str, str]) -> None:
+        if "instrument_ids" in settings:
+            self.instrument_ids_edit.setText(settings["instrument_ids"])
+
+        if "candle_instrument" in settings:
+            self.candle_instrument_edit.setText(settings["candle_instrument"])
+
+        if "candle_days" in settings:
+            self.candle_days_edit.setText(settings["candle_days"])
+
+        if "candle_limit" in settings:
+            self.candle_limit_edit.setText(settings["candle_limit"])
+
+        if "growth_percent" in settings:
+            self.growth_percent_edit.setText(settings["growth_percent"])
+
+        if "take_profit_percent" in settings:
+            self.take_profit_percent_edit.setText(settings["take_profit_percent"])
+
+        if "stop_loss_percent" in settings:
+            self.stop_loss_percent_edit.setText(settings["stop_loss_percent"])
+
+        if "bot_money_limit" in settings:
+            self.bot_money_limit_edit.setText(settings["bot_money_limit"])
+
+        if "manual_instrument_id" in settings:
+            self.manual_instrument_id_edit.setText(settings["manual_instrument_id"])
+
+        if "manual_buy_amount" in settings:
+            self.manual_buy_amount_edit.setText(settings["manual_buy_amount"])
+
+        if "manual_sell_lots" in settings:
+            self.manual_sell_lots_edit.setText(settings["manual_sell_lots"])
+
+        if "client_is_qualified" in settings:
+            self.qualified_investor_checkbox.setChecked(
+                settings["client_is_qualified"] == "1"
+            )
+
+        if "manual_mode" in settings:
+            self.manual_mode_checkbox.setChecked(settings["manual_mode"] == "1")
+
+        if "candle_interval" in settings:
+            candle_interval_index = self.candle_interval_combo.findText(
+                settings["candle_interval"]
+            )
+
+            if candle_interval_index == -1:
+                raise ValueError(
+                    f"Сохранённый интервал свечей не найден: {settings['candle_interval']}"
+                )
+
+            self.candle_interval_combo.setCurrentIndex(candle_interval_index)
+
+        self.refresh_shares_filters_label()
+
+    def save_current_state(self) -> None:
+        settings = {
+            "token": self.token_edit.text().strip(),
+            "account_id": self.account_id_edit.text().strip(),
+            "client_is_qualified": "1" if self.qualified_investor_checkbox.isChecked() else "0",
+            "instrument_ids": self.instrument_ids_edit.text().strip(),
+            "candle_instrument": self.candle_instrument_edit.text().strip(),
+            "candle_days": self.candle_days_edit.text().strip(),
+            "candle_limit": self.candle_limit_edit.text().strip(),
+            "candle_interval": self.candle_interval_combo.currentText(),
+            "growth_percent": self.growth_percent_edit.text().strip(),
+            "take_profit_percent": self.take_profit_percent_edit.text().strip(),
+            "stop_loss_percent": self.stop_loss_percent_edit.text().strip(),
+            "bot_money_limit": self.bot_money_limit_edit.text().strip(),
+            "manual_mode": "1" if self.manual_mode_checkbox.isChecked() else "0",
+            "manual_instrument_id": self.manual_instrument_id_edit.text().strip(),
+            "manual_buy_amount": self.manual_buy_amount_edit.text().strip(),
+            "manual_sell_lots": self.manual_sell_lots_edit.text().strip(),
+        }
+
+        if not settings["token"]:
+            QMessageBox.warning(self, "Ошибка сохранения", "Токен не может быть пустым.")
+            return
+
+        if not settings["account_id"]:
+            QMessageBox.warning(
+                self,
+                "Ошибка сохранения",
+                "Account ID не может быть пустым.",
+            )
+            return
+
+        try:
+            self._get_strategy_settings()
+        except ValueError as error:
+            QMessageBox.warning(self, "Ошибка настроек стратегии", str(error))
+            return
+
+        save_app_settings(settings)
+        save_selected_shares(list(self.selected_shares_by_uid.values()))
+
+        self._log("Настройки сохранены в SQLite.")
+        self._log(f"Сохранено рабочих акций: {len(self.selected_shares_by_uid)}")
 
     def _get_shares_filter_text(self, client_is_qualified: bool) -> str:
         qual_filter = (
