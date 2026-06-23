@@ -429,7 +429,8 @@ class MainWindow(QMainWindow):
         save_app_settings(settings)
         save_selected_shares(list(self.selected_shares_by_uid.values()))
 
-        self._log("Настройки сохранены в SQLite.")
+        self._log("Состояние GUI сохранено в SQLite.")
+        self._log("Проверки токена, account_id и стратегии выполняются при запуске действий.")
         self._log(f"Сохранено рабочих акций: {len(self.selected_shares_by_uid)}")
 
     def reset_current_state(self) -> None:
@@ -437,7 +438,7 @@ class MainWindow(QMainWindow):
             self,
             "Сброс настроек",
             (
-                "Сбросить настройки приложения?\\n\\n"
+                "Сбросить настройки приложения?\n\n"
                 "Будут очищены сохранённые настройки, токен, account_id "
                 "и рабочий список акций."
             ),
