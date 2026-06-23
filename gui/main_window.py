@@ -36,6 +36,7 @@ from bd.settings_storage import (
     save_app_settings,
     save_selected_shares,
 )
+from bd.growth_current_state import list_growth_current_states
 from bd.growth_scan_cycle import list_recent_growth_scan_cycles
 from bd.growth_signal import list_recent_growth_signals
 from tbank.accounts import TBankAccount, get_accounts
@@ -179,6 +180,7 @@ class MainWindow(QMainWindow):
         self.prices_table = QTableWidget()
         self.candles_table = QTableWidget()
         self.growth_signals_table = QTableWidget()
+        self.growth_current_table = QTableWidget()
         self.growth_cycles_table = QTableWidget()
 
         self.log_edit = QPlainTextEdit()
@@ -355,6 +357,7 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.orders_table, "Активные заявки")
         self.tabs.addTab(self.shares_tab_widget, "Акции")
         self.tabs.addTab(self.selected_shares_table, "Рабочие акции")
+        self.tabs.addTab(self.growth_current_table, "Текущий рост")
         self.tabs.addTab(self.prices_table, "Last prices")
         self.tabs.addTab(self.candles_table, "Свечи")
         self.tabs.addTab(self.growth_signals_table, "Сигналы роста")
@@ -759,6 +762,7 @@ class MainWindow(QMainWindow):
             self.refresh_growth_monitor_tables()
 
     def refresh_growth_monitor_tables(self) -> None:
+        self.refresh_growth_current_table()
         self.refresh_growth_signals_table()
         self.refresh_growth_cycles_table()
 
@@ -775,6 +779,106 @@ class MainWindow(QMainWindow):
             text = str(value)
 
         table.setItem(row, column, QTableWidgetItem(text))
+
+    def refresh_growth_current_table(self) -> None:
+        states = list_growth_current_states(limit=500)
+
+        headers = [
+            "Инструмент",
+            "Название",
+            "Рост",
+            "Сигнал",
+            "Текущая цена",
+            "Open свечи",
+            "Интервал",
+            "Свеча UTC",
+            "Цена UTC",
+            "Источник",
+            "Цикл",
+            "Обновлено UTC",
+        ]
+
+        self.growth_current_table.setColumnCount(len(headers))
+        self.growth_current_table.setHorizontalHeaderLabels(headers)
+        self.growth_current_table.setRowCount(len(states))
+
+        for row_index, state in enumerate(states):
+            self._set_table_value(
+                self.growth_current_table,
+                row_index,
+                0,
+                f"{state.ticker}_{state.class_code}",
+            )
+            self._set_table_value(
+                self.growth_current_table,
+                row_index,
+                1,
+                state.name,
+            )
+            self._set_table_value(
+                self.growth_current_table,
+                row_index,
+                2,
+                f"{state.growth_percent:.4f}%",
+            )
+            self._set_table_value(
+                self.growth_current_table,
+                row_index,
+                3,
+                "ДА" if state.is_signal else "",
+            )
+            self._set_table_value(
+                self.growth_current_table,
+                row_index,
+                4,
+                state.current_price,
+            )
+            self._set_table_value(
+                self.growth_current_table,
+                row_index,
+                5,
+                state.candle_open_price,
+            )
+            self._set_table_value(
+                self.growth_current_table,
+                row_index,
+                6,
+                state.interval_label,
+            )
+            self._set_table_value(
+                self.growth_current_table,
+                row_index,
+                7,
+                state.candle_time_utc,
+            )
+            self._set_table_value(
+                self.growth_current_table,
+                row_index,
+                8,
+                state.last_price_time_utc,
+            )
+            self._set_table_value(
+                self.growth_current_table,
+                row_index,
+                9,
+                state.base_source,
+            )
+            self._set_table_value(
+                self.growth_current_table,
+                row_index,
+                10,
+                state.scan_cycle_id,
+            )
+            self._set_table_value(
+                self.growth_current_table,
+                row_index,
+                11,
+                state.calculated_at_utc,
+            )
+
+        self.growth_current_table.horizontalHeader().setSectionResizeMode(
+            QHeaderView.ResizeMode.ResizeToContents
+        )
 
     def refresh_growth_signals_table(self) -> None:
         signals = list_recent_growth_signals(limit=100)

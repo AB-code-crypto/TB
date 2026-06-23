@@ -2,6 +2,10 @@ import asyncio
 from collections.abc import Callable
 from datetime import datetime, timezone
 
+from bd.growth_current_state import (
+    GrowthCurrentStateInput,
+    save_growth_current_states,
+)
 from bd.growth_scan_cycle import (
     GROWTH_SCAN_CYCLE_STATUS_ERROR,
     GROWTH_SCAN_CYCLE_STATUS_SUCCESS,
@@ -144,6 +148,7 @@ def build_success_log_lines(
         f"Цен получено: {report.total_prices_received}",
         f"Snapshot сохранено: {report.snapshot_rows_saved}",
         f"Рассчитано: {len(report.results)}",
+        f"Текущий рост обновлён: {len(report.results)}",
         f"Сигналов в расчёте: {len(report.signals)}",
         f"Новых сигналов сохранено: {new_signals_count}",
         f"Дубликатов сигнала пропущено: {duplicate_signals_count}",
@@ -171,6 +176,36 @@ def build_success_log_lines(
     return lines
 
 
+
+
+def save_current_growth_state(
+    scan_cycle_id: int,
+    calculated_at_utc: datetime,
+    report: GrowthScanReport,
+) -> int:
+    rows = [
+        GrowthCurrentStateInput(
+            scan_cycle_id=scan_cycle_id,
+            calculated_at_utc=calculated_at_utc,
+            instrument_uid=result.instrument_uid,
+            ticker=result.ticker,
+            class_code=result.class_code,
+            name=result.name,
+            interval_label=report.interval_label,
+            threshold_percent=report.growth_threshold_percent,
+            current_price=result.current_price,
+            candle_open_price=result.candle_open_price,
+            growth_percent=result.growth_percent,
+            candle_time_utc=result.candle_time_utc,
+            candle_is_complete=result.candle_is_complete,
+            last_price_time_utc=result.last_price_time_utc,
+            base_source=result.base_source,
+            is_signal=result.growth_percent >= report.growth_threshold_percent,
+        )
+        for result in report.results
+    ]
+
+    return save_growth_current_states(rows)
 async def _sleep_with_stop(
     seconds: float,
     should_stop: StopCallback,
@@ -214,6 +249,11 @@ async def run_growth_monitor_service(
                 report=report,
                 new_signals_count=new_signals_count,
                 duplicate_signals_count=duplicate_signals_count,
+            )
+            current_growth_rows_saved = save_current_growth_state(
+                scan_cycle_id=scan_cycle_id,
+                calculated_at_utc=cycle_finished_at,
+                report=report,
             )
         except Exception as error:
             cycle_finished_at = datetime.now(timezone.utc)
