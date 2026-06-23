@@ -56,6 +56,7 @@ class GrowthScanResult:
 class GrowthScanReport:
     interval_label: str
     growth_threshold_percent: Decimal
+    max_price_age_seconds: int
     total_selected_shares: int
     total_prices_received: int
     snapshot_rows_saved: int
@@ -148,6 +149,16 @@ async def scan_growth_once() -> GrowthScanReport:
     growth_threshold_percent = Decimal(settings["growth_percent"])
     interval = get_growth_candle_interval(settings["growth_candle_interval"])
 
+    max_price_age_seconds_raw = settings["max_price_age_seconds"]
+
+    try:
+        max_price_age_seconds = int(max_price_age_seconds_raw)
+    except ValueError as error:
+        raise ValueError("max_price_age_seconds должен быть целым числом.") from error
+
+    if max_price_age_seconds <= 0:
+        raise ValueError("max_price_age_seconds должен быть больше 0.")
+
     if growth_threshold_percent <= 0:
         raise ValueError("Рост для покупки должен быть больше 0.")
 
@@ -186,6 +197,19 @@ async def scan_growth_once() -> GrowthScanReport:
             if last_price is None:
                 skipped.append(
                     f"{share.ticker}_{share.class_code}: последняя цена не получена"
+                )
+                continue
+
+            price_age_seconds = (
+                now_utc - last_price.time.astimezone(timezone.utc)
+            ).total_seconds()
+
+            if price_age_seconds > max_price_age_seconds:
+                skipped.append(
+                    f"{share.ticker}_{share.class_code}: "
+                    f"цена устарела, age={price_age_seconds:.2f} сек., "
+                    f"limit={max_price_age_seconds} сек., "
+                    f"last_price_time_utc={last_price.time}"
                 )
                 continue
 
@@ -246,6 +270,7 @@ async def scan_growth_once() -> GrowthScanReport:
     return GrowthScanReport(
         interval_label=interval.label,
         growth_threshold_percent=growth_threshold_percent,
+        max_price_age_seconds=max_price_age_seconds,
         total_selected_shares=len(selected_shares),
         total_prices_received=len(prices),
         snapshot_rows_saved=snapshot_rows_saved,
@@ -265,6 +290,7 @@ def print_growth_report(report: GrowthScanReport) -> None:
     print("=== Growth scan report ===")
     print(f"Интервал расчёта роста: {report.interval_label}")
     print(f"Порог роста: {_format_percent(report.growth_threshold_percent)}")
+    print(f"Макс. возраст цены: {report.max_price_age_seconds} сек.")
     print(f"Рабочих акций: {report.total_selected_shares}")
     print(f"Цен получено: {report.total_prices_received}")
     print(f"Строк snapshot сохранено: {report.snapshot_rows_saved}")

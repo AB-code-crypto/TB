@@ -114,6 +114,7 @@ def print_monitor_report(
     print(f"[{now_utc}] Growth monitor cycle #{scan_cycle_id}")
     print(f"Интервал расчёта роста: {report.interval_label}")
     print(f"Порог роста: {_format_percent(report.growth_threshold_percent)}")
+    print(f"Макс. возраст цены: {report.max_price_age_seconds} сек.")
     print(f"Рабочих акций: {report.total_selected_shares}")
     print(f"Цен получено: {report.total_prices_received}")
     print(f"Snapshot сохранено: {report.snapshot_rows_saved}")
