@@ -59,6 +59,7 @@ class MainWindow(QMainWindow):
             self.account_id = ""
 
         self.threads: list[QThread] = []
+        self.workers: list[AsyncTaskWorker] = []
 
         self.setWindowTitle("TBank Robot — GUI v0.1")
         self.resize(1300, 800)
@@ -164,26 +165,48 @@ class MainWindow(QMainWindow):
 
         thread = QThread(self)
         worker = AsyncTaskWorker(task_factory)
+
+        self.threads.append(thread)
+        self.workers.append(worker)
+
         worker.moveToThread(thread)
 
         thread.started.connect(worker.run)
 
-        worker.finished.connect(lambda result: self._handle_success(name, result, on_success))
-        worker.failed.connect(lambda error: self._handle_error(name, error))
+        worker.finished.connect(
+            lambda result, task_name=name, success_handler=on_success: self._handle_success(
+                task_name,
+                result,
+                success_handler,
+            )
+        )
+        worker.failed.connect(
+            lambda error, task_name=name: self._handle_error(
+                task_name,
+                error,
+            )
+        )
 
         worker.finished.connect(thread.quit)
         worker.failed.connect(thread.quit)
 
         thread.finished.connect(worker.deleteLater)
         thread.finished.connect(thread.deleteLater)
-        thread.finished.connect(lambda: self._remove_thread(thread))
+        thread.finished.connect(
+            lambda current_thread=thread, current_worker=worker: self._cleanup_task(
+                current_thread,
+                current_worker,
+            )
+        )
 
-        self.threads.append(thread)
         thread.start()
 
-    def _remove_thread(self, thread: QThread) -> None:
+    def _cleanup_task(self, thread: QThread, worker: AsyncTaskWorker) -> None:
         if thread in self.threads:
             self.threads.remove(thread)
+
+        if worker in self.workers:
+            self.workers.remove(worker)
 
     def _handle_success(self, name: str, result, on_success) -> None:
         self._log(f"Задача выполнена: {name}")
