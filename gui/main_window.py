@@ -36,6 +36,8 @@ from bd.settings_storage import (
     save_app_settings,
     save_selected_shares,
 )
+from bd.growth_scan_cycle import list_recent_growth_scan_cycles
+from bd.growth_signal import list_recent_growth_signals
 from tbank.accounts import TBankAccount, get_accounts
 from tbank.active_orders import TBankActiveOrder, get_active_orders
 from tbank.balance import PortfolioBalance, get_balance
@@ -176,12 +178,15 @@ class MainWindow(QMainWindow):
         self.selected_shares_table = QTableWidget()
         self.prices_table = QTableWidget()
         self.candles_table = QTableWidget()
+        self.growth_signals_table = QTableWidget()
+        self.growth_cycles_table = QTableWidget()
 
         self.log_edit = QPlainTextEdit()
         self.log_edit.setReadOnly(True)
 
         self._build_ui()
         self.refresh_selected_shares_table()
+        self.refresh_growth_monitor_tables()
 
         self._log("GUI v0.1 запущен.")
         self._log(f"Рабочих акций загружено из SQLite: {len(self.selected_shares_by_uid)}")
@@ -291,7 +296,7 @@ class MainWindow(QMainWindow):
         strategy_layout.addWidget(QLabel("Лимит денег для бота, ₽:"), 1, 2)
         strategy_layout.addWidget(self.bot_money_limit_edit, 1, 3)
 
-        self.robot_toggle_button = QPushButton("Включить мониторинг")
+        self.robot_toggle_button = QPushButton("Включить робота")
         self.robot_toggle_button.setCheckable(True)
         self.robot_toggle_button.toggled.connect(self.toggle_robot_monitoring)
         self._set_robot_visual_state("stopped")
@@ -352,6 +357,8 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.selected_shares_table, "Рабочие акции")
         self.tabs.addTab(self.prices_table, "Last prices")
         self.tabs.addTab(self.candles_table, "Свечи")
+        self.tabs.addTab(self.growth_signals_table, "Сигналы роста")
+        self.tabs.addTab(self.growth_cycles_table, "Циклы мониторинга")
         self.tabs.addTab(self.log_edit, "Лог")
 
         root_layout.addWidget(controls)
@@ -695,7 +702,7 @@ class MainWindow(QMainWindow):
         self.robot_is_running = True
         self._set_robot_visual_state("running")
 
-        self._log("Запуск мониторинга роста.")
+        self._log("Робот включён. Режим: наблюдение за ростом без отправки заявок.")
         self._log(f"Рабочих акций: {len(self.selected_shares_by_uid)}")
         self._log(f"Рост для покупки: {settings['growth_percent']}%")
         self._log(
@@ -714,7 +721,7 @@ class MainWindow(QMainWindow):
 
         thread.started.connect(worker.run)
 
-        worker.log_message.connect(self._log)
+        worker.log_message.connect(self._handle_growth_monitor_log_message)
         worker.finished.connect(self._on_growth_monitor_finished)
         worker.failed.connect(self._on_growth_monitor_failed)
 
@@ -741,6 +748,234 @@ class MainWindow(QMainWindow):
         self._log("Остановка мониторинга запрошена.")
         self.growth_monitor_worker.stop()
 
+    def _handle_growth_monitor_log_message(self, message: str) -> None:
+        self._log(message)
+
+        if (
+            message.startswith("Growth monitor cycle #")
+            or message.startswith("Ошибка цикла #")
+            or message == "Growth monitor service остановлен."
+        ):
+            self.refresh_growth_monitor_tables()
+
+    def refresh_growth_monitor_tables(self) -> None:
+        self.refresh_growth_signals_table()
+        self.refresh_growth_cycles_table()
+
+    def _set_table_value(
+        self,
+        table: QTableWidget,
+        row: int,
+        column: int,
+        value: object,
+    ) -> None:
+        if value is None:
+            text = ""
+        else:
+            text = str(value)
+
+        table.setItem(row, column, QTableWidgetItem(text))
+
+    def refresh_growth_signals_table(self) -> None:
+        signals = list_recent_growth_signals(limit=100)
+
+        headers = [
+            "ID",
+            "Обнаружен UTC",
+            "Инструмент",
+            "Интервал",
+            "Свеча UTC",
+            "Рост",
+            "Порог",
+            "Текущая цена",
+            "Open свечи",
+            "Статус",
+        ]
+
+        self.growth_signals_table.setColumnCount(len(headers))
+        self.growth_signals_table.setHorizontalHeaderLabels(headers)
+        self.growth_signals_table.setRowCount(len(signals))
+
+        for row_index, signal in enumerate(signals):
+            self._set_table_value(
+                self.growth_signals_table,
+                row_index,
+                0,
+                signal.id,
+            )
+            self._set_table_value(
+                self.growth_signals_table,
+                row_index,
+                1,
+                signal.detected_at_utc,
+            )
+            self._set_table_value(
+                self.growth_signals_table,
+                row_index,
+                2,
+                f"{signal.ticker}_{signal.class_code}",
+            )
+            self._set_table_value(
+                self.growth_signals_table,
+                row_index,
+                3,
+                signal.interval_label,
+            )
+            self._set_table_value(
+                self.growth_signals_table,
+                row_index,
+                4,
+                signal.candle_time_utc,
+            )
+            self._set_table_value(
+                self.growth_signals_table,
+                row_index,
+                5,
+                f"{signal.growth_percent:.4f}%",
+            )
+            self._set_table_value(
+                self.growth_signals_table,
+                row_index,
+                6,
+                f"{signal.threshold_percent:.4f}%",
+            )
+            self._set_table_value(
+                self.growth_signals_table,
+                row_index,
+                7,
+                signal.current_price,
+            )
+            self._set_table_value(
+                self.growth_signals_table,
+                row_index,
+                8,
+                signal.candle_open_price,
+            )
+            self._set_table_value(
+                self.growth_signals_table,
+                row_index,
+                9,
+                signal.status,
+            )
+
+        self.growth_signals_table.horizontalHeader().setSectionResizeMode(
+            QHeaderView.ResizeMode.ResizeToContents
+        )
+
+    def refresh_growth_cycles_table(self) -> None:
+        cycles = list_recent_growth_scan_cycles(limit=100)
+
+        headers = [
+            "ID",
+            "Статус",
+            "Старт UTC",
+            "Длительность",
+            "Интервал",
+            "Цен",
+            "Расчётов",
+            "Сигналов",
+            "Новых",
+            "Дублей",
+            "Пропущено",
+            "Cache",
+            "API",
+            "Ошибка",
+        ]
+
+        self.growth_cycles_table.setColumnCount(len(headers))
+        self.growth_cycles_table.setHorizontalHeaderLabels(headers)
+        self.growth_cycles_table.setRowCount(len(cycles))
+
+        for row_index, cycle in enumerate(cycles):
+            self._set_table_value(
+                self.growth_cycles_table,
+                row_index,
+                0,
+                cycle.id,
+            )
+            self._set_table_value(
+                self.growth_cycles_table,
+                row_index,
+                1,
+                cycle.status,
+            )
+            self._set_table_value(
+                self.growth_cycles_table,
+                row_index,
+                2,
+                cycle.started_at_utc,
+            )
+            self._set_table_value(
+                self.growth_cycles_table,
+                row_index,
+                3,
+                f"{cycle.duration_seconds:.2f} сек.",
+            )
+            self._set_table_value(
+                self.growth_cycles_table,
+                row_index,
+                4,
+                cycle.interval_label,
+            )
+            self._set_table_value(
+                self.growth_cycles_table,
+                row_index,
+                5,
+                cycle.prices_received_count,
+            )
+            self._set_table_value(
+                self.growth_cycles_table,
+                row_index,
+                6,
+                cycle.results_count,
+            )
+            self._set_table_value(
+                self.growth_cycles_table,
+                row_index,
+                7,
+                cycle.signals_count,
+            )
+            self._set_table_value(
+                self.growth_cycles_table,
+                row_index,
+                8,
+                cycle.new_signals_count,
+            )
+            self._set_table_value(
+                self.growth_cycles_table,
+                row_index,
+                9,
+                cycle.duplicate_signals_count,
+            )
+            self._set_table_value(
+                self.growth_cycles_table,
+                row_index,
+                10,
+                cycle.skipped_count,
+            )
+            self._set_table_value(
+                self.growth_cycles_table,
+                row_index,
+                11,
+                cycle.candle_cache_hits,
+            )
+            self._set_table_value(
+                self.growth_cycles_table,
+                row_index,
+                12,
+                cycle.candle_api_requests,
+            )
+            self._set_table_value(
+                self.growth_cycles_table,
+                row_index,
+                13,
+                cycle.error_text,
+            )
+
+        self.growth_cycles_table.horizontalHeader().setSectionResizeMode(
+            QHeaderView.ResizeMode.ResizeToContents
+        )
+
     def _on_growth_monitor_finished(self) -> None:
         self.robot_is_running = False
         self._set_robot_visual_state("stopped")
@@ -765,15 +1000,15 @@ class MainWindow(QMainWindow):
 
         if state == "running":
             self.robot_is_running = True
-            self.robot_status_label.setText("Робот: мониторинг включён")
+            self.robot_status_label.setText("Робот: включён")
             self.robot_status_label.setStyleSheet(
                 "font-weight: bold; color: #0b6b20;"
             )
             self.robot_toggle_button.setChecked(True)
             self.robot_toggle_button.setEnabled(True)
-            self.robot_toggle_button.setText("Мониторинг включён")
+            self.robot_toggle_button.setText("Робот включён")
             self.robot_toggle_button.setToolTip(
-                "Мониторинг работает. Нажмите, чтобы остановить."
+                "Робот включён в режиме наблюдения. Нажмите, чтобы выключить."
             )
             self.robot_toggle_button.setStyleSheet(
                 """
@@ -792,14 +1027,14 @@ class MainWindow(QMainWindow):
             )
 
         elif state == "stopping":
-            self.robot_status_label.setText("Робот: мониторинг останавливается")
+            self.robot_status_label.setText("Робот: выключается")
             self.robot_status_label.setStyleSheet(
                 "font-weight: bold; color: #8a5a00;"
             )
             self.robot_toggle_button.setChecked(True)
             self.robot_toggle_button.setEnabled(False)
-            self.robot_toggle_button.setText("Остановка мониторинга...")
-            self.robot_toggle_button.setToolTip("Идёт остановка мониторинга.")
+            self.robot_toggle_button.setText("Выключение робота...")
+            self.robot_toggle_button.setToolTip("Идёт выключение робота.")
             self.robot_toggle_button.setStyleSheet(
                 """
                 QPushButton {
@@ -814,15 +1049,15 @@ class MainWindow(QMainWindow):
             )
 
         elif state == "error":
-            self.robot_status_label.setText("Робот: ошибка мониторинга")
+            self.robot_status_label.setText("Робот: ошибка")
             self.robot_status_label.setStyleSheet(
                 "font-weight: bold; color: #8a1f11;"
             )
             self.robot_toggle_button.setChecked(False)
             self.robot_toggle_button.setEnabled(True)
-            self.robot_toggle_button.setText("Ошибка. Включить снова")
+            self.robot_toggle_button.setText("Ошибка. Включить робота")
             self.robot_toggle_button.setToolTip(
-                "Мониторинг остановлен из-за ошибки. Нажмите, чтобы запустить снова."
+                "Робот остановлен из-за ошибки. Нажмите, чтобы включить снова."
             )
             self.robot_toggle_button.setStyleSheet(
                 """
@@ -848,9 +1083,9 @@ class MainWindow(QMainWindow):
             )
             self.robot_toggle_button.setChecked(False)
             self.robot_toggle_button.setEnabled(True)
-            self.robot_toggle_button.setText("Включить мониторинг")
+            self.robot_toggle_button.setText("Включить робота")
             self.robot_toggle_button.setToolTip(
-                "Мониторинг выключен. Нажмите, чтобы включить."
+                "Робот выключен. Нажмите, чтобы включить."
             )
             self.robot_toggle_button.setStyleSheet(
                 """
