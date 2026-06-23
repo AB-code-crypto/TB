@@ -124,6 +124,7 @@ class MainWindow(QMainWindow):
         self.growth_candle_interval_combo = QComboBox()
         self.growth_candle_interval_combo.addItems(list(GROWTH_CANDLE_INTERVALS.keys()))
         self.growth_candle_interval_combo.setCurrentText("30 секунд")
+        self.scan_interval_seconds_edit = QLineEdit("10")
         self.take_profit_percent_edit = QLineEdit("1.00")
         self.stop_loss_percent_edit = QLineEdit("1.00")
         self.bot_money_limit_edit = QLineEdit("10000.00")
@@ -269,6 +270,8 @@ class MainWindow(QMainWindow):
 
         strategy_layout.addWidget(QLabel("Интервал расчёта роста:"), 0, 4)
         strategy_layout.addWidget(self.growth_candle_interval_combo, 0, 5, 1, 2)
+        strategy_layout.addWidget(QLabel("Интервал проверки, сек:"), 1, 4)
+        strategy_layout.addWidget(self.scan_interval_seconds_edit, 1, 5, 1, 2)
 
         strategy_layout.addWidget(QLabel("Продать при прибыли, %:"), 0, 2)
         strategy_layout.addWidget(self.take_profit_percent_edit, 0, 3)
@@ -378,6 +381,9 @@ class MainWindow(QMainWindow):
 
             self.growth_candle_interval_combo.setCurrentIndex(growth_candle_interval_index)
 
+        if "scan_interval_seconds" in settings:
+            self.scan_interval_seconds_edit.setText(settings["scan_interval_seconds"])
+
         if "take_profit_percent" in settings:
             self.take_profit_percent_edit.setText(settings["take_profit_percent"])
 
@@ -436,6 +442,7 @@ class MainWindow(QMainWindow):
             "candle_interval": self.candle_interval_combo.currentText(),
             "growth_percent": self.growth_percent_edit.text().strip(),
             "growth_candle_interval": self.growth_candle_interval_combo.currentText(),
+            "scan_interval_seconds": self.scan_interval_seconds_edit.text().strip(),
             "take_profit_percent": self.take_profit_percent_edit.text().strip(),
             "stop_loss_percent": self.stop_loss_percent_edit.text().strip(),
             "bot_money_limit": self.bot_money_limit_edit.text().strip(),
@@ -490,6 +497,7 @@ class MainWindow(QMainWindow):
 
         self.growth_percent_edit.setText("1.00")
         self.growth_candle_interval_combo.setCurrentText("30 секунд")
+        self.scan_interval_seconds_edit.setText("10")
 
         self.take_profit_percent_edit.setText("1.00")
         self.stop_loss_percent_edit.setText("1.00")
@@ -562,6 +570,16 @@ class MainWindow(QMainWindow):
                 f"Некорректный интервал расчёта роста: {growth_candle_interval}"
             )
 
+        scan_interval_raw = self.scan_interval_seconds_edit.text().strip()
+
+        try:
+            scan_interval_seconds = int(scan_interval_raw)
+        except ValueError as error:
+            raise ValueError("Интервал проверки должен быть целым числом секунд.") from error
+
+        if scan_interval_seconds <= 0:
+            raise ValueError("Интервал проверки должен быть больше 0.")
+
         take_profit_percent = self._parse_decimal_field(
             self.take_profit_percent_edit,
             "Продать при прибыли, %",
@@ -591,6 +609,7 @@ class MainWindow(QMainWindow):
             "growth_percent": growth_percent,
             "growth_candle_interval": growth_candle_interval,
             "growth_candle_interval_value": GROWTH_CANDLE_INTERVALS[growth_candle_interval],
+            "scan_interval_seconds": scan_interval_seconds,
             "take_profit_percent": take_profit_percent,
             "stop_loss_percent": stop_loss_percent,
             "bot_money_limit": bot_money_limit,
@@ -631,6 +650,7 @@ class MainWindow(QMainWindow):
         self._log(
             f"Интервал расчёта роста: {settings['growth_candle_interval']}"
         )
+        self._log(f"Интервал проверки: {settings['scan_interval_seconds']} сек.")
         self._log(f"Take profit: {settings['take_profit_percent']}%")
         self._log(f"Stop loss: {settings['stop_loss_percent']}%")
         self._log(f"Лимит денег для бота: {settings['bot_money_limit']} ₽")
