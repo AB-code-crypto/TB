@@ -1,8 +1,9 @@
 import asyncio
 from datetime import datetime, timezone
 
-from bot.growth_scanner import GrowthScanReport, scan_growth_once
+from bd.growth_signal import count_growth_signals, save_growth_signal
 from bd.settings_storage import load_app_settings
+from bot.growth_scanner import GrowthScanReport, scan_growth_once
 
 
 def _get_scan_interval_seconds() -> int:
@@ -24,7 +25,42 @@ def _format_percent(value) -> str:
     return f"{value:.4f}%"
 
 
-def print_monitor_report(report: GrowthScanReport) -> None:
+def save_report_signals(report: GrowthScanReport) -> tuple[int, int]:
+    detected_at_utc = datetime.now(timezone.utc)
+
+    new_signals_count = 0
+    duplicate_signals_count = 0
+
+    for signal in report.signals:
+        signal_id = save_growth_signal(
+            detected_at_utc=detected_at_utc,
+            instrument_uid=signal.instrument_uid,
+            ticker=signal.ticker,
+            class_code=signal.class_code,
+            name=signal.name,
+            interval_label=report.interval_label,
+            candle_time_utc=signal.candle_time_utc,
+            current_price=signal.current_price,
+            candle_open_price=signal.candle_open_price,
+            growth_percent=signal.growth_percent,
+            threshold_percent=report.growth_threshold_percent,
+            last_price_time_utc=signal.last_price_time_utc,
+            base_source=signal.base_source,
+        )
+
+        if signal_id is None:
+            duplicate_signals_count += 1
+        else:
+            new_signals_count += 1
+
+    return new_signals_count, duplicate_signals_count
+
+
+def print_monitor_report(
+    report: GrowthScanReport,
+    new_signals_count: int,
+    duplicate_signals_count: int,
+) -> None:
     now_utc = datetime.now(timezone.utc).isoformat()
 
     print()
@@ -35,13 +71,16 @@ def print_monitor_report(report: GrowthScanReport) -> None:
     print(f"Цен получено: {report.total_prices_received}")
     print(f"Snapshot сохранено: {report.snapshot_rows_saved}")
     print(f"Рассчитано: {len(report.results)}")
-    print(f"Сигналов: {len(report.signals)}")
-    print(f"Пропущено: {len(report.skipped)}")
+    print(f"Сигналов в расчёте: {len(report.signals)}")
+    print(f"Новых сигналов сохранено: {new_signals_count}")
+    print(f"Дубликатов сигнала пропущено: {duplicate_signals_count}")
+    print(f"Всего сигналов в БД: {count_growth_signals()}")
+    print(f"Пропущено инструментов: {len(report.skipped)}")
     print(f"Свечи из cache: {report.candle_cache_hits}")
     print(f"Свечи из API: {report.candle_api_requests}")
 
     if report.signals:
-        print("Сигналы:")
+        print("Сигналы текущего расчёта:")
 
         for number, signal in enumerate(report.signals[:20], start=1):
             print(
@@ -49,6 +88,7 @@ def print_monitor_report(report: GrowthScanReport) -> None:
                 f"{_format_percent(signal.growth_percent)} "
                 f"current={signal.current_price} "
                 f"open={signal.candle_open_price} "
+                f"candle_time_utc={signal.candle_time_utc} "
                 f"source={signal.base_source}"
             )
 
@@ -62,6 +102,7 @@ async def run_growth_monitor() -> None:
         try:
             scan_interval_seconds = _get_scan_interval_seconds()
             report = await scan_growth_once()
+            new_signals_count, duplicate_signals_count = save_report_signals(report)
         except Exception as error:
             print()
             print(
@@ -72,7 +113,11 @@ async def run_growth_monitor() -> None:
             await asyncio.sleep(5)
             continue
 
-        print_monitor_report(report)
+        print_monitor_report(
+            report=report,
+            new_signals_count=new_signals_count,
+            duplicate_signals_count=duplicate_signals_count,
+        )
 
         cycle_finished_at = datetime.now(timezone.utc)
         elapsed_seconds = (cycle_finished_at - cycle_started_at).total_seconds()
