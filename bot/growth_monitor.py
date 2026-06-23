@@ -8,6 +8,7 @@ from bd.growth_scan_cycle import (
     save_growth_scan_cycle,
 )
 from bd.growth_signal import count_growth_signals, save_growth_signal
+from bd.price_snapshot import cleanup_old_price_snapshots
 from bd.settings_storage import load_app_settings
 from bot.growth_scanner import GrowthScanReport, scan_growth_once
 
@@ -25,6 +26,22 @@ def _get_scan_interval_seconds() -> int:
         raise ValueError("scan_interval_seconds должен быть больше 0.")
 
     return scan_interval_seconds
+
+
+
+def _get_price_snapshot_retention_days() -> int:
+    settings = load_app_settings()
+    raw_value = settings["price_snapshot_retention_days"]
+
+    try:
+        retention_days = int(raw_value)
+    except ValueError as error:
+        raise ValueError("price_snapshot_retention_days должен быть целым числом.") from error
+
+    if retention_days <= 0:
+        raise ValueError("price_snapshot_retention_days должен быть больше 0.")
+
+    return retention_days
 
 
 def _format_percent(value) -> str:
@@ -107,6 +124,7 @@ def print_monitor_report(
     report: GrowthScanReport,
     new_signals_count: int,
     duplicate_signals_count: int,
+    deleted_old_price_snapshots_count: int,
 ) -> None:
     now_utc = datetime.now(timezone.utc).isoformat()
 
@@ -122,6 +140,7 @@ def print_monitor_report(
     print(f"Сигналов в расчёте: {len(report.signals)}")
     print(f"Новых сигналов сохранено: {new_signals_count}")
     print(f"Дубликатов сигнала пропущено: {duplicate_signals_count}")
+    print(f"Удалено старых snapshot-строк: {deleted_old_price_snapshots_count}")
     print(f"Всего сигналов в БД: {count_growth_signals()}")
     print(f"Всего циклов в БД: {count_growth_scan_cycles()}")
     print(f"Пропущено инструментов: {len(report.skipped)}")
@@ -150,8 +169,12 @@ async def run_growth_monitor() -> None:
 
         try:
             scan_interval_seconds = _get_scan_interval_seconds()
+            price_snapshot_retention_days = _get_price_snapshot_retention_days()
             report = await scan_growth_once()
             new_signals_count, duplicate_signals_count = save_report_signals(report)
+            deleted_old_price_snapshots_count = cleanup_old_price_snapshots(
+                retention_days=price_snapshot_retention_days,
+            )
             cycle_finished_at = datetime.now(timezone.utc)
             scan_cycle_id = save_success_cycle(
                 started_at_utc=cycle_started_at,
@@ -159,6 +182,7 @@ async def run_growth_monitor() -> None:
                 report=report,
                 new_signals_count=new_signals_count,
                 duplicate_signals_count=duplicate_signals_count,
+            deleted_old_price_snapshots_count=deleted_old_price_snapshots_count,
             )
         except Exception as error:
             cycle_finished_at = datetime.now(timezone.utc)

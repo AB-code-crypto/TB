@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 from bd.database import get_connection
@@ -55,6 +55,13 @@ def init_price_snapshot_storage() -> None:
             """
             CREATE INDEX IF NOT EXISTS idx_price_snapshot_ticker_captured_at
             ON price_snapshot (ticker, class_code, captured_at_utc)
+            """
+        )
+
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_price_snapshot_captured_at
+            ON price_snapshot (captured_at_utc)
             """
         )
 
@@ -234,3 +241,42 @@ def count_price_snapshots() -> int:
         ).fetchone()
 
     return row["total"]
+
+
+
+def delete_price_snapshots_older_than(cutoff_time_utc: datetime) -> int:
+    init_price_snapshot_storage()
+
+    if cutoff_time_utc.tzinfo is None:
+        raise ValueError("cutoff_time_utc должен быть timezone-aware.")
+
+    cutoff_time_text = _datetime_to_storage_text(cutoff_time_utc)
+
+    with get_connection() as connection:
+        cursor = connection.execute(
+            """
+            DELETE FROM price_snapshot
+            WHERE captured_at_utc < ?
+            """,
+            (cutoff_time_text,),
+        )
+
+    return cursor.rowcount
+
+
+def cleanup_old_price_snapshots(
+    retention_days: int,
+    now_utc: datetime | None = None,
+) -> int:
+    if retention_days <= 0:
+        raise ValueError("retention_days должен быть больше 0.")
+
+    if now_utc is None:
+        now_utc = datetime.now(timezone.utc)
+
+    if now_utc.tzinfo is None:
+        raise ValueError("now_utc должен быть timezone-aware.")
+
+    cutoff_time_utc = now_utc.astimezone(timezone.utc) - timedelta(days=retention_days)
+
+    return delete_price_snapshots_older_than(cutoff_time_utc)

@@ -126,6 +126,7 @@ class MainWindow(QMainWindow):
         self.growth_candle_interval_combo.setCurrentText("30 секунд")
         self.scan_interval_seconds_edit = QLineEdit("10")
         self.max_price_age_seconds_edit = QLineEdit("30")
+        self.price_snapshot_retention_days_edit = QLineEdit("7")
         self.take_profit_percent_edit = QLineEdit("1.00")
         self.stop_loss_percent_edit = QLineEdit("1.00")
         self.bot_money_limit_edit = QLineEdit("10000.00")
@@ -275,6 +276,8 @@ class MainWindow(QMainWindow):
         strategy_layout.addWidget(self.scan_interval_seconds_edit, 1, 5, 1, 2)
         strategy_layout.addWidget(QLabel("Макс. возраст цены, сек:"), 2, 4)
         strategy_layout.addWidget(self.max_price_age_seconds_edit, 2, 5, 1, 2)
+        strategy_layout.addWidget(QLabel("Хранить снимки цен, дней:"), 3, 4)
+        strategy_layout.addWidget(self.price_snapshot_retention_days_edit, 3, 5, 1, 2)
 
         strategy_layout.addWidget(QLabel("Продать при прибыли, %:"), 0, 2)
         strategy_layout.addWidget(self.take_profit_percent_edit, 0, 3)
@@ -390,6 +393,9 @@ class MainWindow(QMainWindow):
         if "max_price_age_seconds" in settings:
             self.max_price_age_seconds_edit.setText(settings["max_price_age_seconds"])
 
+        if "price_snapshot_retention_days" in settings:
+            self.price_snapshot_retention_days_edit.setText(settings["price_snapshot_retention_days"])
+
         if "take_profit_percent" in settings:
             self.take_profit_percent_edit.setText(settings["take_profit_percent"])
 
@@ -450,6 +456,7 @@ class MainWindow(QMainWindow):
             "growth_candle_interval": self.growth_candle_interval_combo.currentText(),
             "scan_interval_seconds": self.scan_interval_seconds_edit.text().strip(),
             "max_price_age_seconds": self.max_price_age_seconds_edit.text().strip(),
+            "price_snapshot_retention_days": self.price_snapshot_retention_days_edit.text().strip(),
             "take_profit_percent": self.take_profit_percent_edit.text().strip(),
             "stop_loss_percent": self.stop_loss_percent_edit.text().strip(),
             "bot_money_limit": self.bot_money_limit_edit.text().strip(),
@@ -506,6 +513,7 @@ class MainWindow(QMainWindow):
         self.growth_candle_interval_combo.setCurrentText("30 секунд")
         self.scan_interval_seconds_edit.setText("10")
         self.max_price_age_seconds_edit.setText("30")
+        self.price_snapshot_retention_days_edit.setText("3")
 
         self.take_profit_percent_edit.setText("1.00")
         self.stop_loss_percent_edit.setText("1.00")
@@ -598,6 +606,16 @@ class MainWindow(QMainWindow):
         if max_price_age_seconds <= 0:
             raise ValueError("Максимальный возраст цены должен быть больше 0.")
 
+        price_snapshot_retention_days_raw = self.price_snapshot_retention_days_edit.text().strip()
+
+        try:
+            price_snapshot_retention_days = int(price_snapshot_retention_days_raw)
+        except ValueError as error:
+            raise ValueError("Срок хранения снимков цен должен быть целым числом дней.") from error
+
+        if price_snapshot_retention_days <= 0:
+            raise ValueError("Срок хранения снимков цен должен быть больше 0.")
+
         take_profit_percent = self._parse_decimal_field(
             self.take_profit_percent_edit,
             "Продать при прибыли, %",
@@ -629,6 +647,7 @@ class MainWindow(QMainWindow):
             "growth_candle_interval_value": GROWTH_CANDLE_INTERVALS[growth_candle_interval],
             "scan_interval_seconds": scan_interval_seconds,
             "max_price_age_seconds": max_price_age_seconds,
+            "price_snapshot_retention_days": price_snapshot_retention_days,
             "take_profit_percent": take_profit_percent,
             "stop_loss_percent": stop_loss_percent,
             "bot_money_limit": bot_money_limit,
@@ -671,6 +690,7 @@ class MainWindow(QMainWindow):
         )
         self._log(f"Интервал проверки: {settings['scan_interval_seconds']} сек.")
         self._log(f"Макс. возраст цены: {settings['max_price_age_seconds']} сек.")
+        self._log(f"Хранение снимков цен: {settings['price_snapshot_retention_days']} дней.")
         self._log(f"Take profit: {settings['take_profit_percent']}%")
         self._log(f"Stop loss: {settings['stop_loss_percent']}%")
         self._log(f"Лимит денег для бота: {settings['bot_money_limit']} ₽")
