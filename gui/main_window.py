@@ -31,6 +31,7 @@ from gui.worker import AsyncTaskWorker
 from bd.settings_storage import (
     load_app_settings,
     load_selected_shares,
+    reset_app_storage,
     save_app_settings,
     save_selected_shares,
 )
@@ -107,6 +108,18 @@ class MainWindow(QMainWindow):
         self.robot_status_label = QLabel("Робот: выключен")
         self.manual_mode_checkbox = QCheckBox("Ручной режим")
 
+        self.allow_buy_checkbox = QCheckBox("Покупки разрешены")
+        self.allow_buy_checkbox.setChecked(True)
+        self.allow_buy_checkbox.setToolTip(
+            "Если выключено — робот не будет открывать новые покупки."
+        )
+
+        self.allow_sell_checkbox = QCheckBox("Продажи разрешены")
+        self.allow_sell_checkbox.setChecked(True)
+        self.allow_sell_checkbox.setToolTip(
+            "Если выключено — робот не будет продавать позиции автоматически."
+        )
+
         self.manual_instrument_id_edit = QLineEdit("SBER_TQBR")
         self.manual_buy_amount_edit = QLineEdit("10000.00")
         self.manual_sell_lots_edit = QLineEdit("1")
@@ -139,8 +152,10 @@ class MainWindow(QMainWindow):
         self.log_edit.setReadOnly(True)
 
         self._build_ui()
+        self.refresh_selected_shares_table()
 
         self._log("GUI v0.1 запущен.")
+        self._log(f"Рабочих акций загружено из SQLite: {len(self.selected_shares_by_uid)}")
         self._log(
             f"Поле токена: {'заполнено' if self.token_edit.text().strip() else 'пустое'}"
         )
@@ -266,10 +281,18 @@ class MainWindow(QMainWindow):
 
         strategy_layout.addWidget(manual_buy_button, 4, 2)
         strategy_layout.addWidget(manual_sell_button, 4, 3)
+        strategy_layout.addWidget(QLabel("Разрешения:"), 5, 0)
+        strategy_layout.addWidget(self.allow_buy_checkbox, 5, 1)
+        strategy_layout.addWidget(self.allow_sell_checkbox, 5, 2)
+
 
         save_state_button = QPushButton("Сохранить настройки")
         save_state_button.clicked.connect(self.save_current_state)
-        strategy_layout.addWidget(save_state_button, 5, 0, 1, 4)
+
+        reset_state_button = QPushButton("Сбросить настройки")
+        reset_state_button.clicked.connect(self.reset_current_state)
+        strategy_layout.addWidget(save_state_button, 6, 0, 1, 2)
+        strategy_layout.addWidget(reset_state_button, 6, 2, 1, 2)
 
 
         self.accounts_table.cellDoubleClicked.connect(self.select_account_from_table)
@@ -343,6 +366,12 @@ class MainWindow(QMainWindow):
         if "manual_mode" in settings:
             self.manual_mode_checkbox.setChecked(settings["manual_mode"] == "1")
 
+        if "allow_buy" in settings:
+            self.allow_buy_checkbox.setChecked(settings["allow_buy"] == "1")
+
+        if "allow_sell" in settings:
+            self.allow_sell_checkbox.setChecked(settings["allow_sell"] == "1")
+
         if "candle_interval" in settings:
             candle_interval_index = self.candle_interval_combo.findText(
                 settings["candle_interval"]
@@ -372,6 +401,8 @@ class MainWindow(QMainWindow):
             "stop_loss_percent": self.stop_loss_percent_edit.text().strip(),
             "bot_money_limit": self.bot_money_limit_edit.text().strip(),
             "manual_mode": "1" if self.manual_mode_checkbox.isChecked() else "0",
+            "allow_buy": "1" if self.allow_buy_checkbox.isChecked() else "0",
+            "allow_sell": "1" if self.allow_sell_checkbox.isChecked() else "0",
             "manual_instrument_id": self.manual_instrument_id_edit.text().strip(),
             "manual_buy_amount": self.manual_buy_amount_edit.text().strip(),
             "manual_sell_lots": self.manual_sell_lots_edit.text().strip(),
@@ -400,6 +431,62 @@ class MainWindow(QMainWindow):
 
         self._log("Настройки сохранены в SQLite.")
         self._log(f"Сохранено рабочих акций: {len(self.selected_shares_by_uid)}")
+
+    def reset_current_state(self) -> None:
+        answer = QMessageBox.question(
+            self,
+            "Сброс настроек",
+            (
+                "Сбросить настройки приложения?\\n\\n"
+                "Будут очищены сохранённые настройки, токен, account_id "
+                "и рабочий список акций."
+            ),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+
+        reset_app_storage()
+
+        self.token_edit.clear()
+        self.account_id_edit.clear()
+
+        self.qualified_investor_checkbox.setChecked(False)
+        self.manual_mode_checkbox.setChecked(False)
+
+        self.allow_buy_checkbox.setChecked(True)
+        self.allow_sell_checkbox.setChecked(True)
+
+        self.instrument_ids_edit.setText("SBER_TQBR, GAZP_TQBR, LKOH_TQBR")
+
+        self.candle_instrument_edit.setText("SBER_TQBR")
+        self.candle_days_edit.setText("1")
+        self.candle_limit_edit.setText("50")
+        self.candle_interval_combo.setCurrentText("1 минута")
+
+        self.growth_percent_edit.setText("1.00")
+        self.take_profit_percent_edit.setText("1.00")
+        self.stop_loss_percent_edit.setText("1.00")
+        self.bot_money_limit_edit.setText("10000.00")
+
+        self.manual_instrument_id_edit.setText("SBER_TQBR")
+        self.manual_buy_amount_edit.setText("10000.00")
+        self.manual_sell_lots_edit.setText("1")
+
+        self.robot_is_running = False
+        self.robot_status_label.setText("Робот: выключен")
+
+        self.selected_shares_by_uid.clear()
+        self.refresh_selected_shares_table()
+        self.refresh_available_shares_table()
+        self.refresh_shares_filters_label()
+
+        self._log("Настройки сброшены.")
+        self._log("Рабочий список акций очищен.")
+        self._log("Покупки разрешены: да")
+        self._log("Продажи разрешены: да")
 
     def _get_shares_filter_text(self, client_is_qualified: bool) -> str:
         qual_filter = (
@@ -489,6 +576,17 @@ class MainWindow(QMainWindow):
         except ValueError as error:
             QMessageBox.warning(self, "Ошибка настроек стратегии", str(error))
             return
+        if (
+            not self.allow_buy_checkbox.isChecked()
+            and not self.allow_sell_checkbox.isChecked()
+        ):
+            QMessageBox.warning(
+                self,
+                "Ошибка режима робота",
+                "Покупки и продажи отключены. Робот не сможет ничего делать.",
+            )
+            return
+
 
         self.robot_is_running = True
         self.robot_status_label.setText("Робот: включен")
@@ -499,6 +597,12 @@ class MainWindow(QMainWindow):
         self._log(f"Take profit: {settings['take_profit_percent']}%")
         self._log(f"Stop loss: {settings['stop_loss_percent']}%")
         self._log(f"Лимит денег для бота: {settings['bot_money_limit']} ₽")
+        self._log(
+            f"Покупки разрешены: {'да' if self.allow_buy_checkbox.isChecked() else 'нет'}"
+        )
+        self._log(
+            f"Продажи разрешены: {'да' if self.allow_sell_checkbox.isChecked() else 'нет'}"
+        )
         self._log("Автологика пока не подключена. GUI фиксирует настройки.")
 
     def stop_robot_placeholder(self) -> None:

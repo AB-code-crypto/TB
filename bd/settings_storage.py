@@ -153,3 +153,12 @@ def load_selected_shares() -> list[TBankShare]:
         _share_from_payload(row["payload"])
         for row in rows
     ]
+
+
+
+def reset_app_storage() -> None:
+    init_settings_storage()
+
+    with get_connection() as connection:
+        connection.execute("DELETE FROM app_settings")
+        connection.execute("DELETE FROM selected_shares")
