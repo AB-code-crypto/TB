@@ -1,6 +1,12 @@
 import asyncio
 from datetime import datetime, timezone
 
+from bd.growth_scan_cycle import (
+    GROWTH_SCAN_CYCLE_STATUS_ERROR,
+    GROWTH_SCAN_CYCLE_STATUS_SUCCESS,
+    count_growth_scan_cycles,
+    save_growth_scan_cycle,
+)
 from bd.growth_signal import count_growth_signals, save_growth_signal
 from bd.settings_storage import load_app_settings
 from bot.growth_scanner import GrowthScanReport, scan_growth_once
@@ -56,7 +62,48 @@ def save_report_signals(report: GrowthScanReport) -> tuple[int, int]:
     return new_signals_count, duplicate_signals_count
 
 
+def save_success_cycle(
+    started_at_utc: datetime,
+    finished_at_utc: datetime,
+    report: GrowthScanReport,
+    new_signals_count: int,
+    duplicate_signals_count: int,
+) -> int:
+    return save_growth_scan_cycle(
+        started_at_utc=started_at_utc,
+        finished_at_utc=finished_at_utc,
+        status=GROWTH_SCAN_CYCLE_STATUS_SUCCESS,
+        interval_label=report.interval_label,
+        threshold_percent=report.growth_threshold_percent,
+        selected_shares_count=report.total_selected_shares,
+        prices_received_count=report.total_prices_received,
+        snapshot_rows_saved=report.snapshot_rows_saved,
+        results_count=len(report.results),
+        signals_count=len(report.signals),
+        new_signals_count=new_signals_count,
+        duplicate_signals_count=duplicate_signals_count,
+        skipped_count=len(report.skipped),
+        candle_cache_hits=report.candle_cache_hits,
+        candle_api_requests=report.candle_api_requests,
+    )
+
+
+def save_error_cycle(
+    started_at_utc: datetime,
+    finished_at_utc: datetime,
+    error: Exception,
+) -> int:
+    return save_growth_scan_cycle(
+        started_at_utc=started_at_utc,
+        finished_at_utc=finished_at_utc,
+        status=GROWTH_SCAN_CYCLE_STATUS_ERROR,
+        error_type=type(error).__name__,
+        error_text=str(error),
+    )
+
+
 def print_monitor_report(
+    scan_cycle_id: int,
     report: GrowthScanReport,
     new_signals_count: int,
     duplicate_signals_count: int,
@@ -64,7 +111,7 @@ def print_monitor_report(
     now_utc = datetime.now(timezone.utc).isoformat()
 
     print()
-    print(f"[{now_utc}] Growth monitor cycle")
+    print(f"[{now_utc}] Growth monitor cycle #{scan_cycle_id}")
     print(f"Интервал расчёта роста: {report.interval_label}")
     print(f"Порог роста: {_format_percent(report.growth_threshold_percent)}")
     print(f"Рабочих акций: {report.total_selected_shares}")
@@ -75,6 +122,7 @@ def print_monitor_report(
     print(f"Новых сигналов сохранено: {new_signals_count}")
     print(f"Дубликатов сигнала пропущено: {duplicate_signals_count}")
     print(f"Всего сигналов в БД: {count_growth_signals()}")
+    print(f"Всего циклов в БД: {count_growth_scan_cycles()}")
     print(f"Пропущено инструментов: {len(report.skipped)}")
     print(f"Свечи из cache: {report.candle_cache_hits}")
     print(f"Свечи из API: {report.candle_api_requests}")
@@ -103,23 +151,48 @@ async def run_growth_monitor() -> None:
             scan_interval_seconds = _get_scan_interval_seconds()
             report = await scan_growth_once()
             new_signals_count, duplicate_signals_count = save_report_signals(report)
+            cycle_finished_at = datetime.now(timezone.utc)
+            scan_cycle_id = save_success_cycle(
+                started_at_utc=cycle_started_at,
+                finished_at_utc=cycle_finished_at,
+                report=report,
+                new_signals_count=new_signals_count,
+                duplicate_signals_count=duplicate_signals_count,
+            )
         except Exception as error:
+            cycle_finished_at = datetime.now(timezone.utc)
+
+            try:
+                error_cycle_id = save_error_cycle(
+                    started_at_utc=cycle_started_at,
+                    finished_at_utc=cycle_finished_at,
+                    error=error,
+                )
+            except Exception as storage_error:
+                error_cycle_id = 0
+                print()
+                print(
+                    f"[{datetime.now(timezone.utc).isoformat()}] "
+                    f"Ошибка сохранения неуспешного цикла: "
+                    f"{type(storage_error).__name__}: {storage_error}"
+                )
+
             print()
             print(
                 f"[{datetime.now(timezone.utc).isoformat()}] "
-                f"Ошибка цикла: {type(error).__name__}: {error}"
+                f"Ошибка цикла #{error_cycle_id}: {type(error).__name__}: {error}"
             )
 
             await asyncio.sleep(5)
             continue
 
         print_monitor_report(
+            scan_cycle_id=scan_cycle_id,
             report=report,
             new_signals_count=new_signals_count,
             duplicate_signals_count=duplicate_signals_count,
         )
 
-        cycle_finished_at = datetime.now(timezone.utc)
         elapsed_seconds = (cycle_finished_at - cycle_started_at).total_seconds()
         sleep_seconds = scan_interval_seconds - elapsed_seconds
 
