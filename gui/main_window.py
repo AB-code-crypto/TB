@@ -1,5 +1,7 @@
 import os
+from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
+from typing import Any
 
 from dotenv import load_dotenv
 from PySide6.QtCore import Qt, QThread
@@ -31,6 +33,7 @@ from tbank.candles import TBankCandle, get_candles
 from tbank.last_prices import TBankLastPrice, get_last_prices_batched
 from tbank.positions import TBankPortfolioPosition, get_portfolio_positions
 
+
 CANDLE_INTERVALS: dict[str, int] = {
     "1 минута": marketdata_pb2.CANDLE_INTERVAL_1_MIN,
     "5 минут": marketdata_pb2.CANDLE_INTERVAL_5_MIN,
@@ -46,17 +49,14 @@ class MainWindow(QMainWindow):
 
         load_dotenv()
 
-        try:
-            self.token = os.environ["INVEST_TOKEN"]
-            self.account_id = os.environ["INVEST_ACCOUNT_ID"]
-        except KeyError as error:
-            QMessageBox.critical(
-                self,
-                "Ошибка .env",
-                f"В .env не задана переменная {error}.",
-            )
-            self.token = ""
-            self.account_id = ""
+        initial_token = ""
+        initial_account_id = ""
+
+        if "INVEST_TOKEN" in os.environ:
+            initial_token = os.environ["INVEST_TOKEN"]
+
+        if "INVEST_ACCOUNT_ID" in os.environ:
+            initial_account_id = os.environ["INVEST_ACCOUNT_ID"]
 
         self.threads: list[QThread] = []
         self.workers: list[AsyncTaskWorker] = []
@@ -64,11 +64,15 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("TBank Robot — GUI v0.1")
         self.resize(1300, 800)
 
-        self.account_id_edit = QLineEdit(self.account_id)
+        self.token_edit = QLineEdit(initial_token)
+        self.token_edit.setEchoMode(QLineEdit.EchoMode.Password)
+
+        self.account_id_edit = QLineEdit(initial_account_id)
         self.instrument_ids_edit = QLineEdit("SBER_TQBR, GAZP_TQBR, LKOH_TQBR")
         self.candle_instrument_edit = QLineEdit("SBER_TQBR")
         self.candle_days_edit = QLineEdit("1")
         self.candle_limit_edit = QLineEdit("50")
+
         self.candle_interval_combo = QComboBox()
         self.candle_interval_combo.addItems(list(CANDLE_INTERVALS.keys()))
 
@@ -78,13 +82,19 @@ class MainWindow(QMainWindow):
         self.orders_table = QTableWidget()
         self.prices_table = QTableWidget()
         self.candles_table = QTableWidget()
+
         self.log_edit = QPlainTextEdit()
         self.log_edit.setReadOnly(True)
 
         self._build_ui()
+
         self._log("GUI v0.1 запущен.")
-        self._log(f"INVEST_TOKEN: {'найден' if self.token else 'не найден'}")
-        self._log(f"INVEST_ACCOUNT_ID: {self.account_id if self.account_id else 'не найден'}")
+        self._log(
+            f"Поле токена: {'заполнено' if self.token_edit.text().strip() else 'пустое'}"
+        )
+        self._log(
+            f"Account ID: {self.account_id_edit.text().strip() if self.account_id_edit.text().strip() else 'не задан'}"
+        )
 
     def _build_ui(self) -> None:
         root = QWidget()
@@ -93,8 +103,11 @@ class MainWindow(QMainWindow):
         controls = QGroupBox("Проверка API")
         controls_layout = QGridLayout(controls)
 
-        controls_layout.addWidget(QLabel("Account ID:"), 0, 0)
-        controls_layout.addWidget(self.account_id_edit, 0, 1, 1, 3)
+        controls_layout.addWidget(QLabel("Токен:"), 0, 0)
+        controls_layout.addWidget(self.token_edit, 0, 1, 1, 3)
+
+        controls_layout.addWidget(QLabel("Account ID:"), 1, 0)
+        controls_layout.addWidget(self.account_id_edit, 1, 1, 1, 3)
 
         accounts_button = QPushButton("Получить аккаунты")
         balance_button = QPushButton("Получить баланс")
@@ -106,33 +119,33 @@ class MainWindow(QMainWindow):
         positions_button.clicked.connect(self.load_positions)
         active_orders_button.clicked.connect(self.load_active_orders)
 
-        controls_layout.addWidget(accounts_button, 1, 0)
-        controls_layout.addWidget(balance_button, 1, 1)
-        controls_layout.addWidget(positions_button, 1, 2)
-        controls_layout.addWidget(active_orders_button, 1, 3)
+        controls_layout.addWidget(accounts_button, 2, 0)
+        controls_layout.addWidget(balance_button, 2, 1)
+        controls_layout.addWidget(positions_button, 2, 2)
+        controls_layout.addWidget(active_orders_button, 2, 3)
 
-        controls_layout.addWidget(QLabel("Instrument IDs:"), 2, 0)
-        controls_layout.addWidget(self.instrument_ids_edit, 2, 1, 1, 2)
+        controls_layout.addWidget(QLabel("Instrument IDs:"), 3, 0)
+        controls_layout.addWidget(self.instrument_ids_edit, 3, 1, 1, 2)
 
         last_prices_button = QPushButton("Получить last prices")
         last_prices_button.clicked.connect(self.load_last_prices)
-        controls_layout.addWidget(last_prices_button, 2, 3)
+        controls_layout.addWidget(last_prices_button, 3, 3)
 
-        controls_layout.addWidget(QLabel("Свечи инструмент:"), 3, 0)
-        controls_layout.addWidget(self.candle_instrument_edit, 3, 1)
+        controls_layout.addWidget(QLabel("Свечи инструмент:"), 4, 0)
+        controls_layout.addWidget(self.candle_instrument_edit, 4, 1)
 
-        controls_layout.addWidget(QLabel("Интервал:"), 3, 2)
-        controls_layout.addWidget(self.candle_interval_combo, 3, 3)
+        controls_layout.addWidget(QLabel("Интервал:"), 4, 2)
+        controls_layout.addWidget(self.candle_interval_combo, 4, 3)
 
-        controls_layout.addWidget(QLabel("Дней назад:"), 4, 0)
-        controls_layout.addWidget(self.candle_days_edit, 4, 1)
+        controls_layout.addWidget(QLabel("Дней назад:"), 5, 0)
+        controls_layout.addWidget(self.candle_days_edit, 5, 1)
 
-        controls_layout.addWidget(QLabel("Лимит свечей:"), 4, 2)
-        controls_layout.addWidget(self.candle_limit_edit, 4, 3)
+        controls_layout.addWidget(QLabel("Лимит свечей:"), 5, 2)
+        controls_layout.addWidget(self.candle_limit_edit, 5, 3)
 
         candles_button = QPushButton("Получить свечи")
         candles_button.clicked.connect(self.load_candles)
-        controls_layout.addWidget(candles_button, 5, 0, 1, 4)
+        controls_layout.addWidget(candles_button, 6, 0, 1, 4)
 
         self.tabs = QTabWidget()
         self.tabs.addTab(self.accounts_table, "Аккаунты")
@@ -148,6 +161,14 @@ class MainWindow(QMainWindow):
 
         self.setCentralWidget(root)
 
+    def _get_token(self) -> str:
+        token = self.token_edit.text().strip()
+
+        if not token:
+            raise ValueError("Токен не может быть пустым.")
+
+        return token
+
     def _get_account_id(self) -> str:
         account_id = self.account_id_edit.text().strip()
 
@@ -156,11 +177,12 @@ class MainWindow(QMainWindow):
 
         return account_id
 
-    def _run_async_task(self, name: str, task_factory, on_success) -> None:
-        if not self.token:
-            QMessageBox.critical(self, "Ошибка", "INVEST_TOKEN не найден.")
-            return
-
+    def _run_async_task(
+        self,
+        name: str,
+        task_factory,
+        on_success: Callable[[Any], None],
+    ) -> None:
         self._log(f"Старт задачи: {name}")
 
         thread = QThread(self)
@@ -208,7 +230,12 @@ class MainWindow(QMainWindow):
         if worker in self.workers:
             self.workers.remove(worker)
 
-    def _handle_success(self, name: str, result, on_success) -> None:
+    def _handle_success(
+        self,
+        name: str,
+        result: object,
+        on_success: Callable[[Any], None],
+    ) -> None:
         self._log(f"Задача выполнена: {name}")
         on_success(result)
 
@@ -220,7 +247,12 @@ class MainWindow(QMainWindow):
         now = datetime.now().strftime("%H:%M:%S")
         self.log_edit.appendPlainText(f"[{now}] {message}")
 
-    def _fill_table(self, table: QTableWidget, headers: list[str], rows: list[list[object]]) -> None:
+    def _fill_table(
+        self,
+        table: QTableWidget,
+        headers: list[str],
+        rows: list[list[object]],
+    ) -> None:
         table.clear()
         table.setColumnCount(len(headers))
         table.setRowCount(len(rows))
@@ -236,8 +268,14 @@ class MainWindow(QMainWindow):
         table.verticalHeader().setVisible(False)
 
     def load_accounts(self) -> None:
+        try:
+            token = self._get_token()
+        except ValueError as error:
+            QMessageBox.warning(self, "Ошибка", str(error))
+            return
+
         async def task():
-            async with AsyncClient(self.token) as client:
+            async with AsyncClient(token) as client:
                 return await get_accounts(client)
 
         self._run_async_task("accounts", task, self.show_accounts)
@@ -259,12 +297,21 @@ class MainWindow(QMainWindow):
             ["account_id", "name", "type", "status", "access_level"],
             rows,
         )
+
+        self._log(f"Получено аккаунтов: {len(accounts)}")
         self.tabs.setCurrentWidget(self.accounts_table)
 
     def load_balance(self) -> None:
+        try:
+            token = self._get_token()
+            account_id = self._get_account_id()
+        except ValueError as error:
+            QMessageBox.warning(self, "Ошибка", str(error))
+            return
+
         async def task():
-            async with AsyncClient(self.token) as client:
-                return await get_balance(client, self._get_account_id())
+            async with AsyncClient(token) as client:
+                return await get_balance(client, account_id)
 
         self._run_async_task("balance", task, self.show_balance)
 
@@ -290,12 +337,20 @@ class MainWindow(QMainWindow):
             ["currency", "total", "blocked", "available"],
             rows,
         )
+
         self.tabs.setCurrentWidget(self.money_table)
 
     def load_positions(self) -> None:
+        try:
+            token = self._get_token()
+            account_id = self._get_account_id()
+        except ValueError as error:
+            QMessageBox.warning(self, "Ошибка", str(error))
+            return
+
         async def task():
-            async with AsyncClient(self.token) as client:
-                return await get_portfolio_positions(client, self._get_account_id())
+            async with AsyncClient(token) as client:
+                return await get_portfolio_positions(client, account_id)
 
         self._run_async_task("positions", task, self.show_positions)
 
@@ -332,12 +387,21 @@ class MainWindow(QMainWindow):
             ],
             rows,
         )
+
+        self._log(f"Получено позиций: {len(positions)}")
         self.tabs.setCurrentWidget(self.positions_table)
 
     def load_active_orders(self) -> None:
+        try:
+            token = self._get_token()
+            account_id = self._get_account_id()
+        except ValueError as error:
+            QMessageBox.warning(self, "Ошибка", str(error))
+            return
+
         async def task():
-            async with AsyncClient(self.token) as client:
-                return await get_active_orders(client, self._get_account_id())
+            async with AsyncClient(token) as client:
+                return await get_active_orders(client, account_id)
 
         self._run_async_task("active_orders", task, self.show_active_orders)
 
@@ -378,9 +442,17 @@ class MainWindow(QMainWindow):
             ],
             rows,
         )
+
+        self._log(f"Получено активных заявок: {len(orders)}")
         self.tabs.setCurrentWidget(self.orders_table)
 
     def load_last_prices(self) -> None:
+        try:
+            token = self._get_token()
+        except ValueError as error:
+            QMessageBox.warning(self, "Ошибка", str(error))
+            return
+
         instrument_ids = [
             value.strip()
             for value in self.instrument_ids_edit.text().split(",")
@@ -392,7 +464,7 @@ class MainWindow(QMainWindow):
             return
 
         async def task():
-            async with AsyncClient(self.token) as client:
+            async with AsyncClient(token) as client:
                 return await get_last_prices_batched(
                     client=client,
                     instrument_ids=instrument_ids,
@@ -419,9 +491,17 @@ class MainWindow(QMainWindow):
             ["ticker", "class_code", "price", "time_utc", "uid", "type"],
             rows,
         )
+
+        self._log(f"Получено last prices: {len(prices)}")
         self.tabs.setCurrentWidget(self.prices_table)
 
     def load_candles(self) -> None:
+        try:
+            token = self._get_token()
+        except ValueError as error:
+            QMessageBox.warning(self, "Ошибка", str(error))
+            return
+
         instrument_id = self.candle_instrument_edit.text().strip()
 
         if not instrument_id:
@@ -450,7 +530,7 @@ class MainWindow(QMainWindow):
         from_time = to_time - timedelta(days=days)
 
         async def task():
-            async with AsyncClient(self.token) as client:
+            async with AsyncClient(token) as client:
                 return await get_candles(
                     client=client,
                     instrument_id=instrument_id,
@@ -481,4 +561,6 @@ class MainWindow(QMainWindow):
             ["time_utc", "open", "high", "low", "close", "volume", "complete"],
             rows,
         )
+
+        self._log(f"Получено свечей: {len(candles)}")
         self.tabs.setCurrentWidget(self.candles_table)
