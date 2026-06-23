@@ -6,15 +6,35 @@ from decimal import Decimal
 from grpc import aio
 from t_tech.invest import AsyncClient
 
+from bd.growth_candle_cache import (
+    get_growth_candle_cache,
+    save_growth_candle_cache,
+)
 from bd.price_snapshot import save_price_snapshot
 from bd.settings_storage import load_app_settings, load_selected_shares
-from bot.growth_candle_intervals import GrowthCandleInterval, get_growth_candle_interval
-from tbank.candles import TBankCandle, get_candles
-from tbank.last_prices import TBankLastPrice, get_last_prices_batched, map_last_prices_by_instrument_uid
+from bot.growth_candle_intervals import (
+    GrowthCandleInterval,
+    get_growth_candle_interval,
+    is_candle_cache_actual,
+)
+from tbank.candles import get_candles
+from tbank.last_prices import (
+    TBankLastPrice,
+    get_last_prices_batched,
+    map_last_prices_by_instrument_uid,
+)
 from tbank.shares import TBankShare
 
 
 BATCH_SIZE = 100
+
+
+@dataclass(frozen=True)
+class GrowthBaseCandle:
+    open_price: Decimal
+    candle_time_utc: datetime
+    is_complete: bool
+    source: str
 
 
 @dataclass(frozen=True)
@@ -29,6 +49,7 @@ class GrowthScanResult:
     candle_time_utc: datetime
     candle_is_complete: bool
     last_price_time_utc: datetime
+    base_source: str
 
 
 @dataclass(frozen=True)
@@ -41,6 +62,8 @@ class GrowthScanReport:
     results: list[GrowthScanResult]
     signals: list[GrowthScanResult]
     skipped: list[str]
+    candle_cache_hits: int
+    candle_api_requests: int
 
 
 def _calculate_growth_percent(
@@ -53,12 +76,29 @@ def _calculate_growth_percent(
     return (current_price / base_price - Decimal("1")) * Decimal("100")
 
 
-async def _get_current_growth_candle(
+async def _get_growth_base_candle(
     client,
     share: TBankShare,
     interval: GrowthCandleInterval,
     now_utc: datetime,
-) -> TBankCandle:
+) -> GrowthBaseCandle:
+    cached_candle = get_growth_candle_cache(
+        instrument_uid=share.uid,
+        interval_label=interval.label,
+    )
+
+    if cached_candle is not None and is_candle_cache_actual(
+        interval=interval,
+        candle_time_utc=cached_candle.candle_time_utc,
+        now_utc=now_utc,
+    ):
+        return GrowthBaseCandle(
+            open_price=cached_candle.open_price,
+            candle_time_utc=cached_candle.candle_time_utc,
+            is_complete=cached_candle.is_complete,
+            source="cache",
+        )
+
     candles = await get_candles(
         client=client,
         instrument_id=share.uid,
@@ -74,7 +114,23 @@ async def _get_current_growth_candle(
             f"interval={interval.label}"
         )
 
-    return max(candles, key=lambda candle: candle.time)
+    candle = max(candles, key=lambda item: item.time)
+
+    save_growth_candle_cache(
+        instrument_uid=share.uid,
+        interval_label=interval.label,
+        candle_time_utc=candle.time,
+        open_price=candle.open,
+        is_complete=candle.is_complete,
+        updated_at_utc=now_utc,
+    )
+
+    return GrowthBaseCandle(
+        open_price=candle.open,
+        candle_time_utc=candle.time,
+        is_complete=candle.is_complete,
+        source="api",
+    )
 
 
 async def scan_growth_once() -> GrowthScanReport:
@@ -121,6 +177,8 @@ async def scan_growth_once() -> GrowthScanReport:
 
         results: list[GrowthScanResult] = []
         skipped: list[str] = []
+        candle_cache_hits = 0
+        candle_api_requests = 0
 
         for share in selected_shares:
             last_price = prices_by_uid.get(share.uid)
@@ -132,16 +190,23 @@ async def scan_growth_once() -> GrowthScanReport:
                 continue
 
             try:
-                candle = await _get_current_growth_candle(
+                base_candle = await _get_growth_base_candle(
                     client=client,
                     share=share,
                     interval=interval,
                     now_utc=now_utc,
                 )
 
+                if base_candle.source == "cache":
+                    candle_cache_hits += 1
+                elif base_candle.source == "api":
+                    candle_api_requests += 1
+                else:
+                    raise RuntimeError(f"Неизвестный источник свечи: {base_candle.source}")
+
                 growth_percent = _calculate_growth_percent(
                     current_price=last_price.price,
-                    base_price=candle.open,
+                    base_price=base_candle.open_price,
                 )
             except Exception as error:
                 skipped.append(
@@ -157,11 +222,12 @@ async def scan_growth_once() -> GrowthScanReport:
                     instrument_uid=share.uid,
                     name=share.name,
                     current_price=last_price.price,
-                    candle_open_price=candle.open,
+                    candle_open_price=base_candle.open_price,
                     growth_percent=growth_percent,
-                    candle_time_utc=candle.time,
-                    candle_is_complete=candle.is_complete,
+                    candle_time_utc=base_candle.candle_time_utc,
+                    candle_is_complete=base_candle.is_complete,
                     last_price_time_utc=last_price.time,
+                    base_source=base_candle.source,
                 )
             )
 
@@ -186,6 +252,8 @@ async def scan_growth_once() -> GrowthScanReport:
         results=results,
         signals=signals,
         skipped=skipped,
+        candle_cache_hits=candle_cache_hits,
+        candle_api_requests=candle_api_requests,
     )
 
 
@@ -203,6 +271,8 @@ def print_growth_report(report: GrowthScanReport) -> None:
     print(f"Результатов рассчитано: {len(report.results)}")
     print(f"Сигналов найдено: {len(report.signals)}")
     print(f"Пропущено: {len(report.skipped)}")
+    print(f"Свечи из cache: {report.candle_cache_hits}")
+    print(f"Свечи из API: {report.candle_api_requests}")
     print()
 
     if report.signals:
@@ -215,7 +285,8 @@ def print_growth_report(report: GrowthScanReport) -> None:
                 f"current={result.current_price} "
                 f"open={result.candle_open_price} "
                 f"candle_time_utc={result.candle_time_utc} "
-                f"complete={result.candle_is_complete}"
+                f"complete={result.candle_is_complete} "
+                f"source={result.base_source}"
             )
 
         print()
@@ -229,7 +300,8 @@ def print_growth_report(report: GrowthScanReport) -> None:
             f"current={result.current_price} "
             f"open={result.candle_open_price} "
             f"candle_time_utc={result.candle_time_utc} "
-            f"complete={result.candle_is_complete}"
+            f"complete={result.candle_is_complete} "
+            f"source={result.base_source}"
         )
 
     if report.skipped:
