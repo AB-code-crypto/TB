@@ -1919,7 +1919,7 @@ class MainWindow(QMainWindow):
         self.shares_table.setColumnHidden(8, True)   # uid: внутренний идентификатор инструмента
         self.shares_table.setColumnHidden(15, True)  # required_tests: внутренний список тестов API
         self.shares_table.setSortingEnabled(True)
-        self.shares_table.sortItems(2, Qt.SortOrder.AscendingOrder)
+        self.shares_table.sortItems(0, Qt.SortOrder.DescendingOrder)
         self.apply_shares_search_filter()
 
     def apply_checked_shares_selection(self) -> None:
