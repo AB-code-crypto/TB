@@ -196,7 +196,9 @@ class MainWindow(QMainWindow):
         self.money_table = QTableWidget()
         self.positions_table = QTableWidget()
         self.orders_table = QTableWidget()
-        self.cancel_active_order_button = QPushButton("Отменить выбранную активную заявку")
+        self.active_orders_actions_widget = QWidget()
+        self.cancel_active_order_button = QPushButton("Отменить отмеченные активные заявки")
+        self.cancel_all_limit_orders_button = QPushButton("Отменить все лимитные заявки")
         self.manual_trading_tab_widget = QWidget()
         self.manual_instrument_info_table = QTableWidget()
         self.refresh_manual_instrument_button = QPushButton("Обновить данные")
@@ -410,8 +412,14 @@ class MainWindow(QMainWindow):
         info_layout.addWidget(self.money_table)
         info_layout.addWidget(self.positions_table)
         info_layout.addWidget(self.orders_table)
-        info_layout.addWidget(self.cancel_active_order_button)
+
+        active_orders_actions_layout = QGridLayout(self.active_orders_actions_widget)
+        active_orders_actions_layout.addWidget(self.cancel_active_order_button, 0, 0)
+        active_orders_actions_layout.addWidget(self.cancel_all_limit_orders_button, 0, 1)
+        info_layout.addWidget(self.active_orders_actions_widget)
+
         self.cancel_active_order_button.clicked.connect(self.cancel_selected_active_order)
+        self.cancel_all_limit_orders_button.clicked.connect(self.cancel_all_active_limit_orders)
         self._hide_info_tables()
 
         self.tabs = QTabWidget()
@@ -2017,7 +2025,7 @@ class MainWindow(QMainWindow):
         ):
             table.setVisible(False)
 
-        self.cancel_active_order_button.setVisible(False)
+        self.active_orders_actions_widget.setVisible(False)
 
     def _show_info_table(self, title: str, table: QTableWidget) -> None:
         self.info_title_label.setText(title)
@@ -2031,7 +2039,7 @@ class MainWindow(QMainWindow):
         ):
             current_table.setVisible(current_table is table)
 
-        self.cancel_active_order_button.setVisible(table is self.orders_table)
+        self.active_orders_actions_widget.setVisible(table is self.orders_table)
         self.tabs.setCurrentWidget(self.info_tab_widget)
 
     def _format_table_value(self, value: object) -> str:
@@ -2390,61 +2398,124 @@ class MainWindow(QMainWindow):
         self._log(f"Получено позиций: {len(positions)}")
         self._show_info_table("Позиции", self.positions_table)
 
+    def _collect_active_order_rows(
+        self,
+        only_checked: bool,
+        only_limit_orders: bool,
+    ) -> list[dict[str, str]]:
+        result: list[dict[str, str]] = []
+
+        for row in range(self.orders_table.rowCount()):
+            checkbox_item = self.orders_table.item(row, 0)
+            order_id_item = self.orders_table.item(row, 1)
+            order_type_item = self.orders_table.item(row, 5)
+            ticker_item = self.orders_table.item(row, 6)
+            class_code_item = self.orders_table.item(row, 7)
+
+            if order_id_item is None or order_type_item is None:
+                continue
+
+            if only_checked:
+                if checkbox_item is None:
+                    continue
+
+                if checkbox_item.checkState() != Qt.CheckState.Checked:
+                    continue
+
+            order_type = order_type_item.text().strip()
+
+            if only_limit_orders and order_type != "ORDER_TYPE_LIMIT":
+                continue
+
+            broker_order_id = order_id_item.text().strip()
+
+            if not broker_order_id:
+                continue
+
+            ticker = ticker_item.text().strip() if ticker_item is not None else ""
+            class_code = class_code_item.text().strip() if class_code_item is not None else ""
+
+            result.append(
+                {
+                    "broker_order_id": broker_order_id,
+                    "order_type": order_type,
+                    "ticker": ticker,
+                    "class_code": class_code,
+                }
+            )
+
+        return result
+
     def cancel_selected_active_order(self) -> None:
-        selected_row = self.orders_table.currentRow()
-
-        if selected_row < 0:
-            QMessageBox.warning(
-                self,
-                "Заявка не выбрана",
-                "Выберите активную заявку в таблице.",
-            )
-            return
-
-        order_id_item = self.orders_table.item(selected_row, 0)
-        order_type_item = self.orders_table.item(selected_row, 4)
-        ticker_item = self.orders_table.item(selected_row, 5)
-        class_code_item = self.orders_table.item(selected_row, 6)
-
-        if order_id_item is None:
-            QMessageBox.warning(
-                self,
-                "Ошибка",
-                "В выбранной строке нет order_id.",
-            )
-            return
-
-        broker_order_id = order_id_item.text().strip()
-
-        if not broker_order_id:
-            QMessageBox.warning(
-                self,
-                "Ошибка",
-                "order_id выбранной заявки пустой.",
-            )
-            return
-
-        order_type = order_type_item.text() if order_type_item is not None else ""
-        ticker = ticker_item.text() if ticker_item is not None else ""
-        class_code = class_code_item.text() if class_code_item is not None else ""
-
-        confirm_text = (
-            "Отменить активную заявку?\n\n"
-            f"{ticker}_{class_code}\n"
-            f"{order_type}\n"
-            f"order_id: {broker_order_id}"
+        orders = self._collect_active_order_rows(
+            only_checked=True,
+            only_limit_orders=False,
         )
+
+        if not orders:
+            QMessageBox.warning(
+                self,
+                "Заявки не выбраны",
+                "Отметьте одну или несколько активных заявок слева в таблице.",
+            )
+            return
+
+        self._confirm_and_cancel_active_orders(
+            orders=orders,
+            title="Отмена отмеченных заявок",
+            message=f"Отменить отмеченные активные заявки: {len(orders)}?",
+        )
+
+    def cancel_all_active_limit_orders(self) -> None:
+        orders = self._collect_active_order_rows(
+            only_checked=False,
+            only_limit_orders=True,
+        )
+
+        if not orders:
+            QMessageBox.information(
+                self,
+                "Лимитных заявок нет",
+                "В таблице нет активных лимитных заявок.",
+            )
+            return
+
+        self._confirm_and_cancel_active_orders(
+            orders=orders,
+            title="Отмена всех лимитных заявок",
+            message=f"Отменить все активные лимитные заявки: {len(orders)}?",
+        )
+
+    def _confirm_and_cancel_active_orders(
+        self,
+        orders: list[dict[str, str]],
+        title: str,
+        message: str,
+    ) -> None:
+        preview_rows = []
+
+        for order in orders[:10]:
+            preview_rows.append(
+                f"{order['ticker']}_{order['class_code']} | {order['order_type']} | {order['broker_order_id']}"
+            )
+
+        preview_text = "\n".join(preview_rows)
+
+        if len(orders) > 10:
+            preview_text += f"\n... ещё {len(orders) - 10}"
+
+        confirm_text = f"{message}\n\n{preview_text}"
 
         answer = QMessageBox.question(
             self,
-            "Отмена активной заявки",
+            title,
             confirm_text,
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
 
         if answer != QMessageBox.StandardButton.Yes:
-            self._log("Отмена активной заявки отменена пользователем.")
+            self._log("Отмена активных заявок отменена пользователем.")
             return
 
         try:
@@ -2454,30 +2525,46 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Ошибка", str(error))
             return
 
-        async def task():
-            async with AsyncClient(token) as client:
-                await cancel_order(
-                    client=client,
-                    account_id=account_id,
-                    broker_order_id=broker_order_id,
-                )
+        broker_order_ids = [
+            order["broker_order_id"]
+            for order in orders
+        ]
 
-                return broker_order_id
+        async def task():
+            cancelled_order_ids = []
+
+            async with AsyncClient(token) as client:
+                for broker_order_id in broker_order_ids:
+                    await cancel_order(
+                        client=client,
+                        account_id=account_id,
+                        broker_order_id=broker_order_id,
+                    )
+                    cancelled_order_ids.append(broker_order_id)
+
+            return cancelled_order_ids
 
         self._run_async_task(
-            "cancel_active_order",
+            "cancel_active_orders",
             task,
-            self.show_cancel_active_order_result,
+            self.show_cancel_active_orders_result,
         )
 
-    def show_cancel_active_order_result(self, broker_order_id: str) -> None:
-        was_robot_order = mark_robot_order_cancelled_by_broker_order(
-            broker_order_id=broker_order_id,
-        )
+    def show_cancel_active_orders_result(self, broker_order_ids: list[str]) -> None:
+        robot_orders_count = 0
+
+        for broker_order_id in broker_order_ids:
+            was_robot_order = mark_robot_order_cancelled_by_broker_order(
+                broker_order_id=broker_order_id,
+            )
+
+            if was_robot_order:
+                robot_orders_count += 1
+
         self.refresh_robot_orders_table()
         self._log(
-            f"Активная заявка отменена: order_id={broker_order_id}. "
-            f"Заявка робота: {'да' if was_robot_order else 'нет'}"
+            "Активные заявки отменены: "
+            f"всего={len(broker_order_ids)}, заявок робота={robot_orders_count}."
         )
         self.load_active_orders()
 
@@ -2496,8 +2583,38 @@ class MainWindow(QMainWindow):
         self._run_async_task("active_orders", task, self.show_active_orders)
 
     def show_active_orders(self, orders: list[TBankActiveOrder]) -> None:
-        rows = [
-            [
+        headers = [
+            "✓",
+            "order_id",
+            "request_id",
+            "status",
+            "direction",
+            "type",
+            "ticker",
+            "class_code",
+            "lots_req",
+            "lots_exec",
+            "price",
+            "amount",
+            "date_utc",
+        ]
+
+        self.orders_table.clear()
+        self.orders_table.setColumnCount(len(headers))
+        self.orders_table.setRowCount(len(orders))
+        self.orders_table.setHorizontalHeaderLabels(headers)
+
+        for row_index, order in enumerate(orders):
+            checkbox_item = QTableWidgetItem()
+            checkbox_item.setFlags(
+                Qt.ItemFlag.ItemIsEnabled
+                | Qt.ItemFlag.ItemIsSelectable
+                | Qt.ItemFlag.ItemIsUserCheckable
+            )
+            checkbox_item.setCheckState(Qt.CheckState.Unchecked)
+            self.orders_table.setItem(row_index, 0, checkbox_item)
+
+            row = [
                 order.order_id,
                 order.order_request_id,
                 order.execution_report_status,
@@ -2507,31 +2624,22 @@ class MainWindow(QMainWindow):
                 order.class_code,
                 order.lots_requested,
                 order.lots_executed,
-                order.initial_order_price,
+                order.initial_security_price,
                 order.total_order_amount,
                 order.order_date,
             ]
-            for order in orders
-        ]
 
-        self._fill_table(
-            self.orders_table,
-            [
-                "order_id",
-                "request_id",
-                "status",
-                "direction",
-                "type",
-                "ticker",
-                "class_code",
-                "lots_req",
-                "lots_exec",
-                "price",
-                "amount",
-                "date_utc",
-            ],
-            rows,
+            for column_index, value in enumerate(row, start=1):
+                self.orders_table.setItem(
+                    row_index,
+                    column_index,
+                    self._make_read_only_item(value),
+                )
+
+        self.orders_table.horizontalHeader().setSectionResizeMode(
+            QHeaderView.ResizeMode.ResizeToContents
         )
+        self.orders_table.verticalHeader().setVisible(False)
 
         self._log(f"Получено активных заявок: {len(orders)}")
         self._show_info_table("Активные заявки", self.orders_table)
