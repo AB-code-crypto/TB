@@ -159,7 +159,7 @@ class MainWindow(QMainWindow):
         self.auto_buy_amount_edit = QLineEdit("500.00")
 
         self.robot_status_label = QLabel("Робот: выключен")
-        self.robot_mode_summary_label = QLabel("Режим: DRY-RUN")
+        self.robot_mode_summary_label = QLabel("Режим: Тестирование")
         self.robot_account_summary_label = QLabel("Account ID: не задан")
         self.robot_selected_shares_summary_label = QLabel("Рабочих акций: 0")
         self.manual_mode_checkbox = QCheckBox("Ручной режим")
@@ -283,7 +283,7 @@ class MainWindow(QMainWindow):
         mode_text = (
             "Режим: РЕАЛЬНАЯ ТОРГОВЛЯ"
             if self.auto_trading_enabled_checkbox.isChecked()
-            else "Режим: DRY-RUN"
+            else "Режим: Тестирование"
         )
         account_id = self.account_id_edit.text().strip() if hasattr(self, "account_id_edit") else ""
 
@@ -412,23 +412,23 @@ class MainWindow(QMainWindow):
         strategy_layout.addWidget(QLabel("Купить при росте, %:"), 0, 0)
         strategy_layout.addWidget(self.growth_percent_edit, 0, 1)
 
-        strategy_layout.addWidget(QLabel("Сумма автопокупки, ₽:"), 0, 2)
-        strategy_layout.addWidget(self.auto_buy_amount_edit, 0, 3)
+        strategy_layout.addWidget(QLabel("Лимит денег для бота, ₽:"), 0, 2)
+        strategy_layout.addWidget(self.bot_money_limit_edit, 0, 3)
 
-        strategy_layout.addWidget(QLabel("Лимит денег для бота, ₽:"), 0, 4)
-        strategy_layout.addWidget(self.bot_money_limit_edit, 0, 5)
+        strategy_layout.addWidget(QLabel("Интервал расчёта роста:"), 0, 4)
+        strategy_layout.addWidget(self.growth_candle_interval_combo, 0, 5)
 
         strategy_layout.addWidget(QLabel("Продать при прибыли, %:"), 1, 0)
         strategy_layout.addWidget(self.take_profit_percent_edit, 1, 1)
 
-        strategy_layout.addWidget(QLabel("Продать при убытке, %:"), 1, 2)
-        strategy_layout.addWidget(self.stop_loss_percent_edit, 1, 3)
+        strategy_layout.addWidget(QLabel("Сумма автопокупки, ₽:"), 1, 2)
+        strategy_layout.addWidget(self.auto_buy_amount_edit, 1, 3)
 
-        strategy_layout.addWidget(QLabel("Интервал расчёта роста:"), 1, 4)
-        strategy_layout.addWidget(self.growth_candle_interval_combo, 1, 5)
+        strategy_layout.addWidget(QLabel("Интервал проверки, сек:"), 1, 4)
+        strategy_layout.addWidget(self.scan_interval_seconds_edit, 1, 5)
 
-        strategy_layout.addWidget(QLabel("Интервал проверки, сек:"), 2, 0)
-        strategy_layout.addWidget(self.scan_interval_seconds_edit, 2, 1)
+        strategy_layout.addWidget(QLabel("Продать при убытке, %:"), 2, 0)
+        strategy_layout.addWidget(self.stop_loss_percent_edit, 2, 1)
 
         strategy_layout.addWidget(QLabel("Макс. возраст цены, сек:"), 2, 2)
         strategy_layout.addWidget(self.max_price_age_seconds_edit, 2, 3)
@@ -1230,7 +1230,7 @@ class MainWindow(QMainWindow):
                 "Робот включён. Режим: РЕАЛЬНАЯ АВТОТОРГОВЛЯ рыночными заявками."
             )
         else:
-            self._log("Робот включён. Режим: dry-run без отправки заявок.")
+            self._log("Робот включён. Режим: тестирование без отправки заявок.")
         self._log(f"Рабочих акций: {len(self.selected_shares_by_uid)}")
         self._log(f"Рост для покупки: {settings['growth_percent']}%")
         self._log(
