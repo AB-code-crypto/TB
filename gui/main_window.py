@@ -172,6 +172,7 @@ class MainWindow(QMainWindow):
         self.money_table = QTableWidget()
         self.positions_table = QTableWidget()
         self.orders_table = QTableWidget()
+        self.info_tab_widget = QWidget()
         self.shares_table = QTableWidget()
         self.shares_tab_widget = QWidget()
         self.apply_checked_shares_button = QPushButton(
@@ -249,6 +250,9 @@ class MainWindow(QMainWindow):
         self.clear_selected_shares_button = QPushButton("Очистить рабочие акции")
         self.clear_selected_shares_button.clicked.connect(self.clear_selected_shares)
 
+        controls_layout.addWidget(QLabel("Рабочие акции:"), 5, 0)
+        controls_layout.addWidget(self.clear_selected_shares_button, 5, 1, 1, 3)
+
         strategy_controls = QGroupBox("Настройки стратегии и режим")
         strategy_layout = QGridLayout(strategy_controls)
 
@@ -325,11 +329,30 @@ class MainWindow(QMainWindow):
         shares_tab_layout.addWidget(self.shares_table)
         shares_tab_layout.addWidget(self.apply_checked_shares_button)
 
+        info_layout = QVBoxLayout(self.info_tab_widget)
+
+        accounts_group = QGroupBox("Аккаунты")
+        accounts_layout = QVBoxLayout(accounts_group)
+        accounts_layout.addWidget(self.accounts_table)
+        info_layout.addWidget(accounts_group)
+
+        balance_group = QGroupBox("Баланс")
+        balance_layout = QVBoxLayout(balance_group)
+        balance_layout.addWidget(self.money_table)
+        info_layout.addWidget(balance_group)
+
+        positions_group = QGroupBox("Позиции")
+        positions_layout = QVBoxLayout(positions_group)
+        positions_layout.addWidget(self.positions_table)
+        info_layout.addWidget(positions_group)
+
+        orders_group = QGroupBox("Активные заявки")
+        orders_layout = QVBoxLayout(orders_group)
+        orders_layout.addWidget(self.orders_table)
+        info_layout.addWidget(orders_group)
+
         self.tabs = QTabWidget()
-        self.tabs.addTab(self.accounts_table, "Аккаунты")
-        self.tabs.addTab(self.money_table, "Баланс")
-        self.tabs.addTab(self.positions_table, "Позиции")
-        self.tabs.addTab(self.orders_table, "Активные заявки")
+        self.tabs.addTab(self.info_tab_widget, "Инфо")
         self.tabs.addTab(self.shares_tab_widget, "Акции")
         self.tabs.addTab(self.selected_shares_table, "Рабочие акции")
 
@@ -1377,7 +1400,7 @@ class MainWindow(QMainWindow):
             self._log(f"Account ID выбран автоматически: {accounts[0].account_id}")
 
         self._log(f"Получено аккаунтов: {len(accounts)}")
-        self.tabs.setCurrentWidget(self.accounts_table)
+        self.tabs.setCurrentWidget(self.info_tab_widget)
 
     def load_balance(self) -> None:
         try:
@@ -1416,7 +1439,7 @@ class MainWindow(QMainWindow):
             rows,
         )
 
-        self.tabs.setCurrentWidget(self.money_table)
+        self.tabs.setCurrentWidget(self.info_tab_widget)
 
     def load_positions(self) -> None:
         try:
@@ -1467,7 +1490,7 @@ class MainWindow(QMainWindow):
         )
 
         self._log(f"Получено позиций: {len(positions)}")
-        self.tabs.setCurrentWidget(self.positions_table)
+        self.tabs.setCurrentWidget(self.info_tab_widget)
 
     def load_active_orders(self) -> None:
         try:
@@ -1522,7 +1545,7 @@ class MainWindow(QMainWindow):
         )
 
         self._log(f"Получено активных заявок: {len(orders)}")
-        self.tabs.setCurrentWidget(self.orders_table)
+        self.tabs.setCurrentWidget(self.info_tab_widget)
 
     def load_shares(self) -> None:
         if self.robot_is_running:
