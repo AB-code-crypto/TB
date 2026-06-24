@@ -176,6 +176,9 @@ class MainWindow(QMainWindow):
         self.info_title_label = QLabel("")
         self.shares_table = QTableWidget()
         self.shares_tab_widget = QWidget()
+        self.shares_search_edit = QLineEdit()
+        self.shares_search_edit.setPlaceholderText("Поиск по тикеру или названию")
+        self.shares_search_status_label = QLabel("")
         self.apply_checked_shares_button = QPushButton(
             "Обновить рабочие акции из отмеченных"
         )
@@ -327,8 +330,15 @@ class MainWindow(QMainWindow):
         )
 
         shares_tab_layout = QVBoxLayout(self.shares_tab_widget)
+        shares_tab_layout.addWidget(QLabel("Поиск акции:"))
+        shares_tab_layout.addWidget(self.shares_search_edit)
+        shares_tab_layout.addWidget(self.shares_search_status_label)
         shares_tab_layout.addWidget(self.shares_table)
         shares_tab_layout.addWidget(self.apply_checked_shares_button)
+
+        self.shares_search_edit.textChanged.connect(
+            lambda text: self.apply_shares_search_filter()
+        )
 
         info_layout = QVBoxLayout(self.info_tab_widget)
         self.info_title_label.setStyleSheet("font-weight: bold;")
@@ -1675,7 +1685,42 @@ class MainWindow(QMainWindow):
 
         self.tabs.setCurrentWidget(self.shares_tab_widget)
 
+    def apply_shares_search_filter(self) -> None:
+        query = self.shares_search_edit.text().strip().casefold()
+        visible_count = 0
+        total_count = self.shares_table.rowCount()
+
+        for row in range(total_count):
+            searchable_values = []
+
+            for column in (2, 3, 4, 8):
+                item = self.shares_table.item(row, column)
+
+                if item is not None:
+                    searchable_values.append(item.text())
+
+            row_text = " ".join(searchable_values).casefold()
+            row_matches = not query or query in row_text
+
+            self.shares_table.setRowHidden(row, not row_matches)
+
+            if row_matches:
+                visible_count += 1
+
+        if total_count == 0:
+            self.shares_search_status_label.setText("")
+        elif query:
+            self.shares_search_status_label.setText(
+                f"Найдено: {visible_count} из {total_count}"
+            )
+        else:
+            self.shares_search_status_label.setText(
+                f"Всего доступных акций: {total_count}"
+            )
+
     def refresh_available_shares_table(self) -> None:
+        self.shares_table.setSortingEnabled(False)
+
         headers = [
             "✓",
             "#",
@@ -1744,6 +1789,9 @@ class MainWindow(QMainWindow):
             QHeaderView.ResizeMode.ResizeToContents
         )
         self.shares_table.verticalHeader().setVisible(False)
+        self.shares_table.setSortingEnabled(True)
+        self.shares_table.sortItems(2, Qt.SortOrder.AscendingOrder)
+        self.apply_shares_search_filter()
 
     def apply_checked_shares_selection(self) -> None:
         if self.robot_is_running:
