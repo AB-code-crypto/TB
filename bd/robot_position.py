@@ -139,6 +139,19 @@ def _decimal_lots_to_int(value: Decimal) -> int:
     return int(value)
 
 
+
+def _infer_lot_from_broker_position(position: TBankPortfolioPosition) -> int:
+    broker_lots = _decimal_lots_to_int(position.quantity_lots)
+
+    if broker_lots <= 0:
+        return 0
+
+    if position.quantity <= 0:
+        return 0
+
+    return int(position.quantity / Decimal(broker_lots))
+
+
 def _save_position_event(
     created_at_utc: datetime,
     account_id: str,
@@ -306,9 +319,17 @@ def sync_robot_positions_with_broker(
     now_utc = datetime.now(timezone.utc)
     positions = list_robot_positions(account_id=account_id)
 
+    broker_positions_by_uid = {
+        position.instrument_uid: position
+        for position in broker_positions
+    }
     broker_lots_by_uid = {
         position.instrument_uid: _decimal_lots_to_int(position.quantity_lots)
         for position in broker_positions
+    }
+    known_uids = {
+        position.instrument_uid
+        for position in positions
     }
 
     reduced_count = 0
@@ -319,6 +340,20 @@ def sync_robot_positions_with_broker(
         for position in positions:
             broker_lots = broker_lots_by_uid.get(position.instrument_uid, 0)
             old_robot_lots = position.robot_lots
+
+            if old_robot_lots == 0 and broker_lots == 0:
+                connection.execute(
+                    """
+                    DELETE FROM robot_position
+                    WHERE account_id = ?
+                      AND instrument_uid = ?
+                    """,
+                    (
+                        account_id,
+                        position.instrument_uid,
+                    ),
+                )
+                continue
 
             if broker_lots < old_robot_lots:
                 new_robot_lots = broker_lots
@@ -404,8 +439,59 @@ def sync_robot_positions_with_broker(
             )
             unchanged_count += 1
 
+        for instrument_uid, broker_position in broker_positions_by_uid.items():
+            if instrument_uid in known_uids:
+                continue
+
+            broker_lots = broker_lots_by_uid[instrument_uid]
+
+            if broker_lots <= 0:
+                continue
+
+            sync_note = "Внешняя позиция клиента. Робот её не трогает."
+            lot = _infer_lot_from_broker_position(broker_position)
+
+            connection.execute(
+                """
+                INSERT INTO robot_position (
+                    account_id,
+                    instrument_uid,
+                    ticker,
+                    class_code,
+                    name,
+                    lot,
+                    robot_lots,
+                    robot_shares,
+                    avg_price,
+                    last_broker_lots,
+                    external_lots,
+                    sync_note,
+                    last_sync_at_utc,
+                    updated_at_utc
+                )
+                VALUES (?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    account_id,
+                    broker_position.instrument_uid,
+                    broker_position.ticker,
+                    broker_position.class_code,
+                    broker_position.ticker,
+                    lot,
+                    str(broker_position.average_position_price),
+                    broker_lots,
+                    broker_lots,
+                    sync_note,
+                    _datetime_to_storage_text(now_utc),
+                    _datetime_to_storage_text(now_utc),
+                ),
+            )
+            unchanged_count += 1
+
+    synced_positions_count = len(list_robot_positions(account_id=account_id))
+
     return RobotPositionSyncReport(
-        checked_count=len(positions),
+        checked_count=synced_positions_count,
         reduced_count=reduced_count,
         zeroed_count=zeroed_count,
         unchanged_count=unchanged_count,
