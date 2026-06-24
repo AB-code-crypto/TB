@@ -1,6 +1,6 @@
 import os
 from uuid import uuid4
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, ROUND_CEILING, ROUND_FLOOR
 from collections.abc import Callable, Coroutine
 from datetime import datetime
 from typing import Any
@@ -51,7 +51,8 @@ from tbank.accounts import TBankAccount, get_accounts
 from tbank.active_orders import TBankActiveOrder, get_active_orders
 from tbank.balance import PortfolioBalance, get_balance
 from tbank.positions import TBankPortfolioPosition, get_portfolio_positions
-from tbank.order_execution import TBankPostOrderResult, post_limit_order
+from tbank.order_book import get_best_order_book_prices
+from tbank.order_execution import TBankPostOrderResult, post_limit_order, post_market_order
 from tbank.last_prices import get_last_price
 from tbank.shares import TBankShare, get_shares
 
@@ -174,6 +175,7 @@ class MainWindow(QMainWindow):
         self.manual_instrument_id_edit = QLineEdit("SBER_TQBR")
         self.manual_buy_amount_edit = QLineEdit("10000.00")
         self.manual_sell_lots_edit = QLineEdit("1")
+        self.manual_limit_offset_edit = QLineEdit("0")
 
         self.qualified_investor_checkbox = QCheckBox("Я квалифицированный инвестор")
         self.qualified_investor_checkbox.setChecked(False)
@@ -206,6 +208,7 @@ class MainWindow(QMainWindow):
         self.update_robot_positions_button = QPushButton(
             "Обновить позиции и запустить робота"
         )
+        self.cancel_robot_start_button = QPushButton("Отменить запуск")
 
         self.selected_shares_table = QTableWidget()
         self.robot_positions_tab_widget = QWidget()
@@ -330,17 +333,28 @@ class MainWindow(QMainWindow):
         strategy_layout.addWidget(QLabel("Объём продажи, лоты:"), 4, 0)
         strategy_layout.addWidget(self.manual_sell_lots_edit, 4, 1)
 
-        self.manual_buy_button = QPushButton("Купить вручную")
-        self.manual_sell_button = QPushButton("Продать вручную")
+        self.manual_market_buy_button = QPushButton("Купить рынком")
+        self.manual_limit_buy_button = QPushButton("Купить лимитом")
+        self.manual_market_sell_button = QPushButton("Продать рынком")
+        self.manual_limit_sell_button = QPushButton("Продать лимитом")
 
-        self.manual_buy_button.clicked.connect(self.manual_buy_placeholder)
-        self.manual_sell_button.clicked.connect(self.manual_sell_placeholder)
+        self.manual_market_buy_button.clicked.connect(self.manual_market_buy)
+        self.manual_limit_buy_button.clicked.connect(self.manual_limit_buy)
+        self.manual_market_sell_button.clicked.connect(self.manual_market_sell)
+        self.manual_limit_sell_button.clicked.connect(self.manual_limit_sell)
 
-        strategy_layout.addWidget(self.manual_buy_button, 4, 2)
-        strategy_layout.addWidget(self.manual_sell_button, 4, 3)
-        strategy_layout.addWidget(QLabel("Разрешения:"), 5, 0)
-        strategy_layout.addWidget(self.allow_buy_checkbox, 5, 1)
-        strategy_layout.addWidget(self.allow_sell_checkbox, 5, 2)
+        strategy_layout.addWidget(QLabel("Отступ лимитной заявки, п.:"), 4, 2)
+        strategy_layout.addWidget(self.manual_limit_offset_edit, 4, 3)
+
+        strategy_layout.addWidget(QLabel("Ручная торговля:"), 5, 0)
+        strategy_layout.addWidget(self.manual_market_buy_button, 5, 1)
+        strategy_layout.addWidget(self.manual_limit_buy_button, 5, 2)
+        strategy_layout.addWidget(self.manual_market_sell_button, 5, 3)
+        strategy_layout.addWidget(self.manual_limit_sell_button, 5, 4)
+
+        strategy_layout.addWidget(QLabel("Разрешения:"), 6, 0)
+        strategy_layout.addWidget(self.allow_buy_checkbox, 6, 1)
+        strategy_layout.addWidget(self.allow_sell_checkbox, 6, 2)
 
 
         self.save_state_button = QPushButton("Сохранить настройки")
@@ -348,8 +362,8 @@ class MainWindow(QMainWindow):
 
         self.reset_state_button = QPushButton("Сбросить настройки")
         self.reset_state_button.clicked.connect(self.reset_current_state)
-        strategy_layout.addWidget(self.save_state_button, 6, 0, 1, 2)
-        strategy_layout.addWidget(self.reset_state_button, 6, 2, 1, 2)
+        strategy_layout.addWidget(self.save_state_button, 7, 0, 1, 2)
+        strategy_layout.addWidget(self.reset_state_button, 7, 2, 1, 2)
 
 
         self.accounts_table.cellDoubleClicked.connect(self.select_account_from_table)
@@ -389,9 +403,15 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.shares_tab_widget, "Акции")
         self.tabs.addTab(self.selected_shares_table, "Рабочие акции")
 
+        self.cancel_robot_start_button.clicked.connect(self.cancel_robot_start_after_sync)
+
         robot_positions_tab_layout = QVBoxLayout(self.robot_positions_tab_widget)
         robot_positions_tab_layout.addWidget(self.robot_positions_table)
-        robot_positions_tab_layout.addWidget(self.update_robot_positions_button)
+
+        robot_positions_actions_layout = QGridLayout()
+        robot_positions_actions_layout.addWidget(self.update_robot_positions_button, 0, 0)
+        robot_positions_actions_layout.addWidget(self.cancel_robot_start_button, 0, 1)
+        robot_positions_tab_layout.addLayout(robot_positions_actions_layout)
 
         self.monitoring_tabs.addTab(self.growth_current_table, "Текущий рост")
         self.monitoring_tabs.addTab(self.growth_signals_table, "Сигналы роста")
@@ -452,6 +472,9 @@ class MainWindow(QMainWindow):
         if "manual_sell_lots" in settings:
             self.manual_sell_lots_edit.setText(settings["manual_sell_lots"])
 
+        if "manual_limit_offset" in settings:
+            self.manual_limit_offset_edit.setText(settings["manual_limit_offset"])
+
         if "client_is_qualified" in settings:
             self.qualified_investor_checkbox.setChecked(
                 settings["client_is_qualified"] == "1"
@@ -493,6 +516,7 @@ class MainWindow(QMainWindow):
             "manual_instrument_id": self.manual_instrument_id_edit.text().strip(),
             "manual_buy_amount": self.manual_buy_amount_edit.text().strip(),
             "manual_sell_lots": self.manual_sell_lots_edit.text().strip(),
+            "manual_limit_offset": self.manual_limit_offset_edit.text().strip(),
         }
 
         save_app_settings(settings)
@@ -543,6 +567,7 @@ class MainWindow(QMainWindow):
         self.manual_instrument_id_edit.setText("SBER_TQBR")
         self.manual_buy_amount_edit.setText("10000.00")
         self.manual_sell_lots_edit.setText("1")
+        self.manual_limit_offset_edit.setText("0")
 
         self.robot_is_running = False
         self.robot_status_label.setText("Робот: выключен")
@@ -737,14 +762,17 @@ class MainWindow(QMainWindow):
             self.manual_instrument_id_edit,
             self.manual_buy_amount_edit,
             self.manual_sell_lots_edit,
+            self.manual_limit_offset_edit,
             self.accounts_button,
             self.shares_button,
             self.apply_checked_shares_button,
             self.clear_selected_shares_button,
             self.save_state_button,
             self.reset_state_button,
-            self.manual_buy_button,
-            self.manual_sell_button,
+            self.manual_market_buy_button,
+            self.manual_limit_buy_button,
+            self.manual_market_sell_button,
+            self.manual_limit_sell_button,
             self.shares_table,
             self.selected_shares_table,
         ]
@@ -1094,6 +1122,9 @@ class MainWindow(QMainWindow):
         if hasattr(self, "update_robot_positions_button"):
             self.update_robot_positions_button.setEnabled(False)
 
+        if hasattr(self, "cancel_robot_start_button"):
+            self.cancel_robot_start_button.setEnabled(False)
+
         if state == "starting":
             self.robot_is_running = False
             self.robot_status_label.setText("Робот: синхронизация позиций")
@@ -1146,6 +1177,9 @@ class MainWindow(QMainWindow):
 
             if hasattr(self, "update_robot_positions_button"):
                 self.update_robot_positions_button.setEnabled(True)
+
+            if hasattr(self, "cancel_robot_start_button"):
+                self.cancel_robot_start_button.setEnabled(True)
 
         elif state == "running":
             self.robot_is_running = True
@@ -1297,6 +1331,57 @@ class MainWindow(QMainWindow):
 
         return Decimal("0")
 
+    def _parse_manual_limit_offset(self) -> Decimal:
+        offset = self._parse_decimal_field(
+            self.manual_limit_offset_edit,
+            "Отступ лимитной заявки",
+        )
+
+        if offset < 0:
+            raise ValueError("Отступ лимитной заявки не может быть меньше 0.")
+
+        return offset
+
+    def _round_price_to_increment(
+        self,
+        price: Decimal,
+        increment: Decimal,
+        side: str,
+    ) -> Decimal:
+        if increment <= 0:
+            return price
+
+        rounding = ROUND_FLOOR if side == "BUY" else ROUND_CEILING
+        steps = (price / increment).to_integral_value(rounding=rounding)
+
+        return steps * increment
+
+    def _calculate_manual_limit_price(
+        self,
+        side: str,
+        best_bid: Decimal,
+        best_ask: Decimal,
+        offset: Decimal,
+        share: TBankShare,
+    ) -> Decimal:
+        if side == "BUY":
+            raw_price = best_ask - offset
+        elif side == "SELL":
+            raw_price = best_bid + offset
+        else:
+            raise ValueError(f"Неизвестная сторона заявки: {side}")
+
+        if raw_price <= 0:
+            raise ValueError(
+                "Лимитная цена после применения отступа стала меньше или равна 0."
+            )
+
+        return self._round_price_to_increment(
+            price=raw_price,
+            increment=share.min_price_increment,
+            side=side,
+        )
+
     def _confirm_manual_order(
         self,
         title: str,
@@ -1312,7 +1397,29 @@ class MainWindow(QMainWindow):
 
         return answer == QMessageBox.StandardButton.Yes
 
+    def manual_market_buy(self) -> None:
+        self._submit_manual_order(side="BUY", order_type="MARKET")
+
+    def manual_limit_buy(self) -> None:
+        self._submit_manual_order(side="BUY", order_type="LIMIT")
+
+    def manual_market_sell(self) -> None:
+        self._submit_manual_order(side="SELL", order_type="MARKET")
+
+    def manual_limit_sell(self) -> None:
+        self._submit_manual_order(side="SELL", order_type="LIMIT")
+
     def manual_buy_placeholder(self) -> None:
+        self.manual_limit_buy()
+
+    def manual_sell_placeholder(self) -> None:
+        self.manual_limit_sell()
+
+    def _submit_manual_order(
+        self,
+        side: str,
+        order_type: str,
+    ) -> None:
         if self.robot_is_running:
             QMessageBox.warning(
                 self,
@@ -1329,7 +1436,7 @@ class MainWindow(QMainWindow):
             )
             return
 
-        if not self.allow_buy_checkbox.isChecked():
+        if side == "BUY" and not self.allow_buy_checkbox.isChecked():
             QMessageBox.warning(
                 self,
                 "Ошибка ручной покупки",
@@ -1337,138 +1444,7 @@ class MainWindow(QMainWindow):
             )
             return
 
-        try:
-            token = self._get_token()
-            account_id = self._get_account_id()
-            instrument_id = self._get_manual_instrument_id()
-            share = self._find_manual_share(instrument_id)
-            buy_amount = self._parse_decimal_field(
-                self.manual_buy_amount_edit,
-                "Сумма одной покупки, ₽",
-            )
-        except ValueError as error:
-            QMessageBox.warning(self, "Ошибка ручной покупки", str(error))
-            return
-
-        if buy_amount <= 0:
-            QMessageBox.warning(
-                self,
-                "Ошибка ручной покупки",
-                "Сумма одной покупки должна быть больше 0.",
-            )
-            return
-
-        async def task():
-            async with AsyncClient(token) as client:
-                last_price = await get_last_price(client, share.uid)
-                one_lot_amount = last_price.price * Decimal(share.lot)
-                quantity_lots = int(buy_amount // one_lot_amount)
-
-                if quantity_lots <= 0:
-                    raise ValueError(
-                        "Суммы одной покупки не хватает даже на 1 лот: "
-                        f"лот стоит примерно {one_lot_amount:.2f} ₽."
-                    )
-
-                requested_amount = one_lot_amount * Decimal(quantity_lots)
-                balance = await get_balance(client, account_id)
-                available_rub = self._get_available_rub(balance)
-
-                if requested_amount > available_rub:
-                    raise ValueError(
-                        "Недостаточно свободных рублей для покупки: "
-                        f"нужно {requested_amount:.2f} ₽, доступно {available_rub:.2f} ₽."
-                    )
-
-                order_request_id = uuid4().hex
-                robot_order_id = create_robot_order(
-                    account_id=account_id,
-                    order_request_id=order_request_id,
-                    side="BUY",
-                    order_type="LIMIT",
-                    instrument_uid=share.uid,
-                    ticker=share.ticker,
-                    class_code=share.class_code,
-                    name=share.name,
-                    quantity_lots=quantity_lots,
-                    quantity_shares=quantity_lots * share.lot,
-                    limit_price=last_price.price,
-                    requested_amount=requested_amount,
-                    source="MANUAL_BUTTON",
-                )
-
-                try:
-                    result = await post_limit_order(
-                        client=client,
-                        account_id=account_id,
-                        order_request_id=order_request_id,
-                        share=share,
-                        side="BUY",
-                        quantity_lots=quantity_lots,
-                        limit_price=last_price.price,
-                    )
-                except Exception as error:
-                    mark_robot_order_failed(
-                        robot_order_id=robot_order_id,
-                        error_text=str(error),
-                    )
-                    raise
-
-                mark_robot_order_sent(
-                    robot_order_id=robot_order_id,
-                    broker_order_id=result.broker_order_id,
-                    execution_report_status=result.execution_report_status,
-                    lots_executed=result.lots_executed,
-                    executed_order_price=result.executed_order_price,
-                    total_order_amount=result.total_order_amount,
-                )
-
-                if result.lots_executed > 0:
-                    apply_robot_order_fill(
-                        account_id=account_id,
-                        share=share,
-                        side="BUY",
-                        executed_lots=result.lots_executed,
-                        executed_price=result.executed_order_price,
-                    )
-
-                return share, result
-
-        confirm_text = (
-            "Отправить лимитную заявку на покупку?\n\n"
-            f"Инструмент: {share.name} ({share.ticker}_{share.class_code})\n"
-            f"Сумма покупки: {buy_amount} ₽\n\n"
-            "Заявка будет отправлена брокеру реально."
-        )
-
-        if not self._confirm_manual_order("Подтверждение покупки", confirm_text):
-            self._log("Ручная покупка отменена пользователем.")
-            return
-
-        self._run_async_task(
-            "manual_buy_order",
-            task,
-            lambda result: self.show_manual_order_result("BUY", result),
-        )
-
-    def manual_sell_placeholder(self) -> None:
-        if self.robot_is_running:
-            QMessageBox.warning(
-                self,
-                "Ошибка",
-                "Для ручной сделки сначала выключите робота.",
-            )
-            return
-
-        if not self.manual_mode_checkbox.isChecked():
-            QMessageBox.warning(
-                self,
-                "Ошибка",
-                "Для ручной сделки включите ручной режим.",
-            )
-            return
-
-        if not self.allow_sell_checkbox.isChecked():
+        if side == "SELL" and not self.allow_sell_checkbox.isChecked():
             QMessageBox.warning(
                 self,
                 "Ошибка ручной продажи",
@@ -1481,79 +1457,141 @@ class MainWindow(QMainWindow):
             account_id = self._get_account_id()
             instrument_id = self._get_manual_instrument_id()
             share = self._find_manual_share(instrument_id)
-            sell_lots_raw = self.manual_sell_lots_edit.text().strip()
-            sell_lots = int(sell_lots_raw)
+            limit_offset = self._parse_manual_limit_offset()
+
+            if side == "BUY":
+                buy_amount = self._parse_decimal_field(
+                    self.manual_buy_amount_edit,
+                    "Сумма одной покупки, ₽",
+                )
+
+                if buy_amount <= 0:
+                    raise ValueError("Сумма одной покупки должна быть больше 0.")
+
+                sell_lots = 0
+            else:
+                sell_lots_raw = self.manual_sell_lots_edit.text().strip()
+                sell_lots = int(sell_lots_raw)
+
+                if sell_lots <= 0:
+                    raise ValueError("Объём продажи должен быть больше 0.")
+
+                buy_amount = Decimal("0")
         except ValueError as error:
-            QMessageBox.warning(
-                self,
-                "Ошибка ручной продажи",
-                f"Объём продажи должен быть целым числом лотов. {error}",
-            )
+            QMessageBox.warning(self, "Ошибка ручной сделки", str(error))
             return
 
-        if sell_lots <= 0:
-            QMessageBox.warning(
-                self,
-                "Ошибка ручной продажи",
-                "Объём продажи должен быть больше 0.",
+        if side == "SELL":
+            robot_position = get_robot_position(
+                account_id=account_id,
+                instrument_uid=share.uid,
             )
-            return
 
-        robot_position = get_robot_position(
-            account_id=account_id,
-            instrument_uid=share.uid,
-        )
+            if robot_position is None or robot_position.robot_lots <= 0:
+                QMessageBox.warning(
+                    self,
+                    "Ошибка ручной продажи",
+                    "У робота нет позиции по этому инструменту.",
+                )
+                return
 
-        if robot_position is None or robot_position.robot_lots <= 0:
-            QMessageBox.warning(
-                self,
-                "Ошибка ручной продажи",
-                "У робота нет позиции по этому инструменту.",
-            )
-            return
-
-        if sell_lots > robot_position.robot_lots:
-            QMessageBox.warning(
-                self,
-                "Ошибка ручной продажи",
-                (
-                    "Нельзя продать больше лотов, чем закреплено за роботом: "
-                    f"продажа={sell_lots}, у робота={robot_position.robot_lots}."
-                ),
-            )
-            return
+            if sell_lots > robot_position.robot_lots:
+                QMessageBox.warning(
+                    self,
+                    "Ошибка ручной продажи",
+                    (
+                        "Нельзя продать больше лотов, чем закреплено за роботом: "
+                        f"продажа={sell_lots}, у робота={robot_position.robot_lots}."
+                    ),
+                )
+                return
 
         async def task():
             async with AsyncClient(token) as client:
-                last_price = await get_last_price(client, share.uid)
-                requested_amount = last_price.price * Decimal(share.lot * sell_lots)
+                best_prices = await get_best_order_book_prices(
+                    client=client,
+                    instrument_id=share.uid,
+                    depth=1,
+                )
+                price_for_estimate = (
+                    best_prices.best_ask
+                    if side == "BUY"
+                    else best_prices.best_bid
+                )
+                limit_price = Decimal("0")
+
+                if order_type == "LIMIT":
+                    limit_price = self._calculate_manual_limit_price(
+                        side=side,
+                        best_bid=best_prices.best_bid,
+                        best_ask=best_prices.best_ask,
+                        offset=limit_offset,
+                        share=share,
+                    )
+                    price_for_estimate = limit_price
+
+                if side == "BUY":
+                    one_lot_amount = price_for_estimate * Decimal(share.lot)
+                    quantity_lots = int(buy_amount // one_lot_amount)
+
+                    if quantity_lots <= 0:
+                        raise ValueError(
+                            "Суммы одной покупки не хватает даже на 1 лот: "
+                            f"лот стоит примерно {one_lot_amount:.2f} ₽."
+                        )
+
+                    requested_amount = one_lot_amount * Decimal(quantity_lots)
+                    balance = await get_balance(client, account_id)
+                    available_rub = self._get_available_rub(balance)
+
+                    if requested_amount > available_rub:
+                        raise ValueError(
+                            "Недостаточно свободных рублей для покупки: "
+                            f"нужно {requested_amount:.2f} ₽, доступно {available_rub:.2f} ₽."
+                        )
+                else:
+                    quantity_lots = sell_lots
+                    requested_amount = price_for_estimate * Decimal(
+                        share.lot * quantity_lots
+                    )
+
                 order_request_id = uuid4().hex
                 robot_order_id = create_robot_order(
                     account_id=account_id,
                     order_request_id=order_request_id,
-                    side="SELL",
-                    order_type="LIMIT",
+                    side=side,
+                    order_type=order_type,
                     instrument_uid=share.uid,
                     ticker=share.ticker,
                     class_code=share.class_code,
                     name=share.name,
-                    quantity_lots=sell_lots,
-                    quantity_shares=sell_lots * share.lot,
-                    limit_price=last_price.price,
+                    quantity_lots=quantity_lots,
+                    quantity_shares=quantity_lots * share.lot,
+                    limit_price=limit_price,
                     requested_amount=requested_amount,
                     source="MANUAL_BUTTON",
                 )
 
                 try:
-                    result = await post_limit_order(
-                        client=client,
-                        account_id=account_id,
-                        order_request_id=order_request_id,
-                        share=share,
-                        side="SELL",
-                        quantity_lots=sell_lots,
-                        limit_price=last_price.price,
-                    )
+                    if order_type == "LIMIT":
+                        result = await post_limit_order(
+                            client=client,
+                            account_id=account_id,
+                            order_request_id=order_request_id,
+                            share=share,
+                            side=side,
+                            quantity_lots=quantity_lots,
+                            limit_price=limit_price,
+                        )
+                    else:
+                        result = await post_market_order(
+                            client=client,
+                            account_id=account_id,
+                            order_request_id=order_request_id,
+                            share=share,
+                            side=side,
+                            quantity_lots=quantity_lots,
+                        )
                 except Exception as error:
                     mark_robot_order_failed(
                         robot_order_id=robot_order_id,
@@ -1574,44 +1612,65 @@ class MainWindow(QMainWindow):
                     apply_robot_order_fill(
                         account_id=account_id,
                         share=share,
-                        side="SELL",
+                        side=side,
                         executed_lots=result.lots_executed,
                         executed_price=result.executed_order_price,
                     )
 
-                return share, result
+                return share, result, order_type, quantity_lots, limit_price
 
+        side_text = "покупку" if side == "BUY" else "продажу"
+        type_text = "лимитную" if order_type == "LIMIT" else "рыночную"
+
+        if side == "BUY":
+            size_text = f"Сумма покупки: {buy_amount} ₽"
+        else:
+            size_text = f"Лотов: {sell_lots}"
+
+        offset_text = (
+            f"Отступ от best price: {limit_offset}"
+            if order_type == "LIMIT"
+            else "Рыночная заявка без лимитной цены"
+        )
         confirm_text = (
-            "Отправить лимитную заявку на продажу?\n\n"
+            f"Отправить {type_text} заявку на {side_text}?\n\n"
             f"Инструмент: {share.name} ({share.ticker}_{share.class_code})\n"
-            f"Лотов: {sell_lots}\n\n"
+            f"{size_text}\n"
+            f"{offset_text}\n\n"
             "Заявка будет отправлена брокеру реально."
         )
 
-        if not self._confirm_manual_order("Подтверждение продажи", confirm_text):
-            self._log("Ручная продажа отменена пользователем.")
+        if not self._confirm_manual_order("Подтверждение ручной сделки", confirm_text):
+            self._log("Ручная сделка отменена пользователем.")
             return
 
         self._run_async_task(
-            "manual_sell_order",
+            f"manual_{side.lower()}_{order_type.lower()}_order",
             task,
-            lambda result: self.show_manual_order_result("SELL", result),
+            lambda result: self.show_manual_order_result(side, result),
         )
 
     def show_manual_order_result(
         self,
         side: str,
-        result: tuple[TBankShare, TBankPostOrderResult],
+        result: tuple[TBankShare, TBankPostOrderResult, str, int, Decimal],
     ) -> None:
-        share, order_result = result
+        share, order_result, order_type, quantity_lots, limit_price = result
         self.refresh_robot_orders_table()
         self.refresh_robot_positions_table()
         self.monitoring_tabs.setCurrentWidget(self.robot_orders_table)
         self.tabs.setCurrentWidget(self.monitoring_tabs)
 
+        price_text = (
+            f"limit_price={limit_price}, "
+            if order_type == "LIMIT"
+            else ""
+        )
         self._log(
             "Ручная заявка отправлена: "
-            f"{side} {share.ticker}_{share.class_code}, "
+            f"{order_type} {side} {share.ticker}_{share.class_code}, "
+            f"лотов={quantity_lots}, "
+            f"{price_text}"
             f"broker_order_id={order_result.broker_order_id}, "
             f"status={order_result.execution_report_status}, "
             f"исполнено лотов={order_result.lots_executed}."
@@ -1835,6 +1894,13 @@ class MainWindow(QMainWindow):
 
         self.account_id_edit.setText(account_id_item.text())
         self._log(f"Account ID выбран из таблицы: {account_id_item.text()}")
+
+    def cancel_robot_start_after_sync(self) -> None:
+        self.pending_robot_start_settings = None
+        self.pending_robot_start_account = None
+        self._set_robot_inputs_locked(False)
+        self._set_robot_visual_state("stopped")
+        self._log("Запуск робота отменён после синхронизации позиций.")
 
     def update_robot_positions_from_table(self) -> None:
         if self.robot_is_running:

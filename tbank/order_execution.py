@@ -9,6 +9,9 @@ from tbank.shares import TBankShare
 
 NANO = Decimal("1000000000")
 
+ORDER_TYPE_LIMIT = "LIMIT"
+ORDER_TYPE_MARKET = "MARKET"
+
 
 class OrdersService(Protocol):
     stub: Any
@@ -66,6 +69,16 @@ def _side_to_order_direction(side: str) -> int:
     raise ValueError(f"Неизвестная сторона заявки: {side}")
 
 
+def _order_type_to_api_value(order_type: str) -> int:
+    if order_type == ORDER_TYPE_LIMIT:
+        return _enum_value("ORDER_TYPE_LIMIT")
+
+    if order_type == ORDER_TYPE_MARKET:
+        return _enum_value("ORDER_TYPE_MARKET")
+
+    raise ValueError(f"Неизвестный тип заявки: {order_type}")
+
+
 def _status_name(value: int) -> str:
     try:
         return orders_pb2.OrderExecutionReportStatus.Name(value)
@@ -78,8 +91,9 @@ def _build_post_order_request(
     order_request_id: str,
     share: TBankShare,
     side: str,
+    order_type: str,
     quantity_lots: int,
-    limit_price: Decimal,
+    limit_price: Decimal | None,
 ):
     request = orders_pb2.PostOrderRequest()
     fields = request.DESCRIPTOR.fields_by_name
@@ -106,22 +120,27 @@ def _build_post_order_request(
         request.direction = _side_to_order_direction(side)
 
     if "order_type" in fields:
-        request.order_type = _enum_value("ORDER_TYPE_LIMIT")
+        request.order_type = _order_type_to_api_value(order_type)
 
-    if "price" in fields:
-        _set_decimal_to_quotation(limit_price, request.price)
+    if order_type == ORDER_TYPE_LIMIT:
+        if limit_price is None:
+            raise ValueError("Для лимитной заявки нужна limit_price.")
+
+        if "price" in fields:
+            _set_decimal_to_quotation(limit_price, request.price)
 
     return request
 
 
-async def post_limit_order(
+async def post_order(
     client: OrdersApiClient,
     account_id: str,
     order_request_id: str,
     share: TBankShare,
     side: str,
+    order_type: str,
     quantity_lots: int,
-    limit_price: Decimal,
+    limit_price: Decimal | None,
 ) -> TBankPostOrderResult:
     if not account_id.strip():
         raise ValueError("account_id не может быть пустым.")
@@ -132,7 +151,7 @@ async def post_limit_order(
     if quantity_lots <= 0:
         raise ValueError("Количество лотов должно быть больше 0.")
 
-    if limit_price <= 0:
+    if order_type == ORDER_TYPE_LIMIT and (limit_price is None or limit_price <= 0):
         raise ValueError("Лимитная цена должна быть больше 0.")
 
     request = _build_post_order_request(
@@ -140,6 +159,7 @@ async def post_limit_order(
         order_request_id=order_request_id,
         share=share,
         side=side,
+        order_type=order_type,
         quantity_lots=quantity_lots,
         limit_price=limit_price,
     )
@@ -158,4 +178,45 @@ async def post_limit_order(
         initial_order_price=_money_to_decimal(getattr(response, "initial_order_price")),
         executed_order_price=_money_to_decimal(getattr(response, "executed_order_price")),
         total_order_amount=_money_to_decimal(getattr(response, "total_order_amount")),
+    )
+
+
+async def post_limit_order(
+    client: OrdersApiClient,
+    account_id: str,
+    order_request_id: str,
+    share: TBankShare,
+    side: str,
+    quantity_lots: int,
+    limit_price: Decimal,
+) -> TBankPostOrderResult:
+    return await post_order(
+        client=client,
+        account_id=account_id,
+        order_request_id=order_request_id,
+        share=share,
+        side=side,
+        order_type=ORDER_TYPE_LIMIT,
+        quantity_lots=quantity_lots,
+        limit_price=limit_price,
+    )
+
+
+async def post_market_order(
+    client: OrdersApiClient,
+    account_id: str,
+    order_request_id: str,
+    share: TBankShare,
+    side: str,
+    quantity_lots: int,
+) -> TBankPostOrderResult:
+    return await post_order(
+        client=client,
+        account_id=account_id,
+        order_request_id=order_request_id,
+        share=share,
+        side=side,
+        order_type=ORDER_TYPE_MARKET,
+        quantity_lots=quantity_lots,
+        limit_price=None,
     )
