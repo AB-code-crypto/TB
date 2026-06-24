@@ -51,6 +51,8 @@ from tbank.accounts import TBankAccount, get_accounts
 from tbank.active_orders import TBankActiveOrder, get_active_orders
 from tbank.balance import PortfolioBalance, get_balance
 from tbank.positions import TBankPortfolioPosition, get_portfolio_positions
+from tbank.order_execution import TBankPostOrderResult, post_limit_order
+from tbank.last_prices import get_last_price
 from tbank.shares import TBankShare, get_shares
 
 
@@ -1268,6 +1270,48 @@ class MainWindow(QMainWindow):
 
         return instrument_id
 
+    def _find_manual_share(self, instrument_id: str) -> TBankShare:
+        normalized_instrument_id = instrument_id.strip().upper()
+
+        for share in self.selected_shares_by_uid.values():
+            if share.uid == instrument_id:
+                return share
+
+            if share.figi.upper() == normalized_instrument_id:
+                return share
+
+            if share.ticker.upper() == normalized_instrument_id:
+                return share
+
+            if f"{share.ticker}_{share.class_code}".upper() == normalized_instrument_id:
+                return share
+
+        raise ValueError(
+            "Инструмент для ручной сделки должен быть в рабочем списке акций."
+        )
+
+    def _get_available_rub(self, balance: PortfolioBalance) -> Decimal:
+        for money in balance.money:
+            if money.currency == "RUB":
+                return money.available
+
+        return Decimal("0")
+
+    def _confirm_manual_order(
+        self,
+        title: str,
+        text: str,
+    ) -> bool:
+        answer = QMessageBox.question(
+            self,
+            title,
+            text,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+
+        return answer == QMessageBox.StandardButton.Yes
+
     def manual_buy_placeholder(self) -> None:
         if self.robot_is_running:
             QMessageBox.warning(
@@ -1285,8 +1329,19 @@ class MainWindow(QMainWindow):
             )
             return
 
+        if not self.allow_buy_checkbox.isChecked():
+            QMessageBox.warning(
+                self,
+                "Ошибка ручной покупки",
+                "Покупки запрещены в настройках.",
+            )
+            return
+
         try:
+            token = self._get_token()
+            account_id = self._get_account_id()
             instrument_id = self._get_manual_instrument_id()
+            share = self._find_manual_share(instrument_id)
             buy_amount = self._parse_decimal_field(
                 self.manual_buy_amount_edit,
                 "Сумма одной покупки, ₽",
@@ -1303,11 +1358,98 @@ class MainWindow(QMainWindow):
             )
             return
 
-        self._log(
-            f"Ручная покупка подготовлена: instrument_id={instrument_id}, "
-            f"сумма={buy_amount} ₽."
+        async def task():
+            async with AsyncClient(token) as client:
+                last_price = await get_last_price(client, share.uid)
+                one_lot_amount = last_price.price * Decimal(share.lot)
+                quantity_lots = int(buy_amount // one_lot_amount)
+
+                if quantity_lots <= 0:
+                    raise ValueError(
+                        "Суммы одной покупки не хватает даже на 1 лот: "
+                        f"лот стоит примерно {one_lot_amount:.2f} ₽."
+                    )
+
+                requested_amount = one_lot_amount * Decimal(quantity_lots)
+                balance = await get_balance(client, account_id)
+                available_rub = self._get_available_rub(balance)
+
+                if requested_amount > available_rub:
+                    raise ValueError(
+                        "Недостаточно свободных рублей для покупки: "
+                        f"нужно {requested_amount:.2f} ₽, доступно {available_rub:.2f} ₽."
+                    )
+
+                order_request_id = uuid4().hex
+                robot_order_id = create_robot_order(
+                    account_id=account_id,
+                    order_request_id=order_request_id,
+                    side="BUY",
+                    order_type="LIMIT",
+                    instrument_uid=share.uid,
+                    ticker=share.ticker,
+                    class_code=share.class_code,
+                    name=share.name,
+                    quantity_lots=quantity_lots,
+                    quantity_shares=quantity_lots * share.lot,
+                    limit_price=last_price.price,
+                    requested_amount=requested_amount,
+                    source="MANUAL_BUTTON",
+                )
+
+                try:
+                    result = await post_limit_order(
+                        client=client,
+                        account_id=account_id,
+                        order_request_id=order_request_id,
+                        share=share,
+                        side="BUY",
+                        quantity_lots=quantity_lots,
+                        limit_price=last_price.price,
+                    )
+                except Exception as error:
+                    mark_robot_order_failed(
+                        robot_order_id=robot_order_id,
+                        error_text=str(error),
+                    )
+                    raise
+
+                mark_robot_order_sent(
+                    robot_order_id=robot_order_id,
+                    broker_order_id=result.broker_order_id,
+                    execution_report_status=result.execution_report_status,
+                    lots_executed=result.lots_executed,
+                    executed_order_price=result.executed_order_price,
+                    total_order_amount=result.total_order_amount,
+                )
+
+                if result.lots_executed > 0:
+                    apply_robot_order_fill(
+                        account_id=account_id,
+                        share=share,
+                        side="BUY",
+                        executed_lots=result.lots_executed,
+                        executed_price=result.executed_order_price,
+                    )
+
+                return share, result
+
+        confirm_text = (
+            "Отправить лимитную заявку на покупку?\n\n"
+            f"Инструмент: {share.name} ({share.ticker}_{share.class_code})\n"
+            f"Сумма покупки: {buy_amount} ₽\n\n"
+            "Заявка будет отправлена брокеру реально."
         )
-        self._log("Реальная отправка заявки пока не подключена.")
+
+        if not self._confirm_manual_order("Подтверждение покупки", confirm_text):
+            self._log("Ручная покупка отменена пользователем.")
+            return
+
+        self._run_async_task(
+            "manual_buy_order",
+            task,
+            lambda result: self.show_manual_order_result("BUY", result),
+        )
 
     def manual_sell_placeholder(self) -> None:
         if self.robot_is_running:
@@ -1326,8 +1468,19 @@ class MainWindow(QMainWindow):
             )
             return
 
+        if not self.allow_sell_checkbox.isChecked():
+            QMessageBox.warning(
+                self,
+                "Ошибка ручной продажи",
+                "Продажи запрещены в настройках.",
+            )
+            return
+
         try:
+            token = self._get_token()
+            account_id = self._get_account_id()
             instrument_id = self._get_manual_instrument_id()
+            share = self._find_manual_share(instrument_id)
             sell_lots_raw = self.manual_sell_lots_edit.text().strip()
             sell_lots = int(sell_lots_raw)
         except ValueError as error:
@@ -1346,11 +1499,123 @@ class MainWindow(QMainWindow):
             )
             return
 
-        self._log(
-            f"Ручная продажа подготовлена: instrument_id={instrument_id}, "
-            f"лоты={sell_lots}."
+        robot_position = get_robot_position(
+            account_id=account_id,
+            instrument_uid=share.uid,
         )
-        self._log("Реальная отправка заявки пока не подключена.")
+
+        if robot_position is None or robot_position.robot_lots <= 0:
+            QMessageBox.warning(
+                self,
+                "Ошибка ручной продажи",
+                "У робота нет позиции по этому инструменту.",
+            )
+            return
+
+        if sell_lots > robot_position.robot_lots:
+            QMessageBox.warning(
+                self,
+                "Ошибка ручной продажи",
+                (
+                    "Нельзя продать больше лотов, чем закреплено за роботом: "
+                    f"продажа={sell_lots}, у робота={robot_position.robot_lots}."
+                ),
+            )
+            return
+
+        async def task():
+            async with AsyncClient(token) as client:
+                last_price = await get_last_price(client, share.uid)
+                requested_amount = last_price.price * Decimal(share.lot * sell_lots)
+                order_request_id = uuid4().hex
+                robot_order_id = create_robot_order(
+                    account_id=account_id,
+                    order_request_id=order_request_id,
+                    side="SELL",
+                    order_type="LIMIT",
+                    instrument_uid=share.uid,
+                    ticker=share.ticker,
+                    class_code=share.class_code,
+                    name=share.name,
+                    quantity_lots=sell_lots,
+                    quantity_shares=sell_lots * share.lot,
+                    limit_price=last_price.price,
+                    requested_amount=requested_amount,
+                    source="MANUAL_BUTTON",
+                )
+
+                try:
+                    result = await post_limit_order(
+                        client=client,
+                        account_id=account_id,
+                        order_request_id=order_request_id,
+                        share=share,
+                        side="SELL",
+                        quantity_lots=sell_lots,
+                        limit_price=last_price.price,
+                    )
+                except Exception as error:
+                    mark_robot_order_failed(
+                        robot_order_id=robot_order_id,
+                        error_text=str(error),
+                    )
+                    raise
+
+                mark_robot_order_sent(
+                    robot_order_id=robot_order_id,
+                    broker_order_id=result.broker_order_id,
+                    execution_report_status=result.execution_report_status,
+                    lots_executed=result.lots_executed,
+                    executed_order_price=result.executed_order_price,
+                    total_order_amount=result.total_order_amount,
+                )
+
+                if result.lots_executed > 0:
+                    apply_robot_order_fill(
+                        account_id=account_id,
+                        share=share,
+                        side="SELL",
+                        executed_lots=result.lots_executed,
+                        executed_price=result.executed_order_price,
+                    )
+
+                return share, result
+
+        confirm_text = (
+            "Отправить лимитную заявку на продажу?\n\n"
+            f"Инструмент: {share.name} ({share.ticker}_{share.class_code})\n"
+            f"Лотов: {sell_lots}\n\n"
+            "Заявка будет отправлена брокеру реально."
+        )
+
+        if not self._confirm_manual_order("Подтверждение продажи", confirm_text):
+            self._log("Ручная продажа отменена пользователем.")
+            return
+
+        self._run_async_task(
+            "manual_sell_order",
+            task,
+            lambda result: self.show_manual_order_result("SELL", result),
+        )
+
+    def show_manual_order_result(
+        self,
+        side: str,
+        result: tuple[TBankShare, TBankPostOrderResult],
+    ) -> None:
+        share, order_result = result
+        self.refresh_robot_orders_table()
+        self.refresh_robot_positions_table()
+        self.monitoring_tabs.setCurrentWidget(self.robot_orders_table)
+        self.tabs.setCurrentWidget(self.monitoring_tabs)
+
+        self._log(
+            "Ручная заявка отправлена: "
+            f"{side} {share.ticker}_{share.class_code}, "
+            f"broker_order_id={order_result.broker_order_id}, "
+            f"status={order_result.execution_report_status}, "
+            f"исполнено лотов={order_result.lots_executed}."
+        )
 
     def _get_token(self) -> str:
         token = self.token_edit.text().strip()
