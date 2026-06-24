@@ -9,6 +9,7 @@ from tbank.shares import TBankShare
 
 ROBOT_POSITION_EVENT_SYNC_REDUCED = "SYNC_REDUCED"
 ROBOT_POSITION_EVENT_SYNC_ZEROED = "SYNC_ZEROED"
+ROBOT_POSITION_EVENT_MANUAL_ADJUSTMENT = "MANUAL_ADJUSTMENT"
 
 
 @dataclass(frozen=True)
@@ -337,6 +338,107 @@ def _resolve_broker_position_identity(
         )
 
     return share.ticker, share.class_code, share.name, share.lot
+
+
+def set_robot_position_lots(
+    account_id: str,
+    instrument_uid: str,
+    robot_lots: int,
+    reason: str,
+) -> bool:
+    init_robot_position_storage()
+
+    if not account_id.strip():
+        raise ValueError("account_id не может быть пустым.")
+
+    if not instrument_uid.strip():
+        raise ValueError("instrument_uid не может быть пустым.")
+
+    if robot_lots < 0:
+        raise ValueError("Количество лотов робота не может быть меньше 0.")
+
+    with get_connection() as connection:
+        row = connection.execute(
+            """
+            SELECT *
+            FROM robot_position
+            WHERE account_id = ?
+              AND instrument_uid = ?
+            LIMIT 1
+            """,
+            (
+                account_id,
+                instrument_uid,
+            ),
+        ).fetchone()
+
+    if row is None:
+        raise ValueError(
+            "Позиция робота не найдена для ручной корректировки: "
+            f"account_id={account_id}, instrument_uid={instrument_uid}"
+        )
+
+    position = _position_row_to_dataclass(row)
+
+    if robot_lots > position.last_broker_lots:
+        raise ValueError(
+            "Лотов у робота не может быть больше, чем лотов у брокера: "
+            f"robot_lots={robot_lots}, broker_lots={position.last_broker_lots}"
+        )
+
+    if robot_lots == position.robot_lots:
+        return False
+
+    now_utc = datetime.now(timezone.utc)
+    external_lots = position.last_broker_lots - robot_lots
+    clean_reason = reason.strip()
+
+    if not clean_reason:
+        clean_reason = "Ручная корректировка позиции робота."
+
+    sync_note = (
+        "Позиция робота скорректирована вручную: "
+        f"{position.robot_lots} → {robot_lots} лот(ов)."
+    )
+
+    with get_connection() as connection:
+        connection.execute(
+            """
+            UPDATE robot_position
+            SET robot_lots = ?,
+                robot_shares = ?,
+                external_lots = ?,
+                sync_note = ?,
+                updated_at_utc = ?
+            WHERE account_id = ?
+              AND instrument_uid = ?
+            """,
+            (
+                robot_lots,
+                robot_lots * position.lot,
+                external_lots,
+                sync_note,
+                _datetime_to_storage_text(now_utc),
+                account_id,
+                instrument_uid,
+            ),
+        )
+
+    _save_position_event(
+        created_at_utc=now_utc,
+        account_id=account_id,
+        instrument_uid=instrument_uid,
+        ticker=position.ticker,
+        class_code=position.class_code,
+        event_type=ROBOT_POSITION_EVENT_MANUAL_ADJUSTMENT,
+        reason=clean_reason,
+        old_robot_lots=position.robot_lots,
+        new_robot_lots=robot_lots,
+        broker_lots=position.last_broker_lots,
+        external_lots=external_lots,
+    )
+
+    return True
 
 
 def sync_robot_positions_with_broker(

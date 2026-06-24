@@ -36,7 +36,7 @@ from gui.monitoring_tables import (
     fill_growth_signals_table,
     fill_robot_positions_table,
 )
-from bd.robot_position import sync_robot_positions_with_broker
+from bd.robot_position import set_robot_position_lots, sync_robot_positions_with_broker
 from bd.settings_storage import (
     load_app_settings,
     load_selected_shares,
@@ -197,6 +197,7 @@ class MainWindow(QMainWindow):
             "Обновить рабочие акции из отмеченных"
         )
         self.sync_robot_positions_button = QPushButton("Синхронизировать позиции робота")
+        self.update_robot_positions_button = QPushButton("Обновить лоты робота")
 
         self.selected_shares_table = QTableWidget()
         self.robot_positions_table = QTableWidget()
@@ -276,12 +277,14 @@ class MainWindow(QMainWindow):
         self.clear_selected_shares_button = QPushButton("Очистить рабочие акции")
         self.clear_selected_shares_button.clicked.connect(self.clear_selected_shares)
         self.sync_robot_positions_button.clicked.connect(self.sync_robot_positions)
+        self.update_robot_positions_button.clicked.connect(self.update_robot_positions_from_table)
 
         controls_layout.addWidget(QLabel("Рабочие акции:"), 6, 0)
         controls_layout.addWidget(self.clear_selected_shares_button, 6, 1, 1, 3)
 
         controls_layout.addWidget(QLabel("Позиции робота:"), 7, 0)
-        controls_layout.addWidget(self.sync_robot_positions_button, 7, 1, 1, 3)
+        controls_layout.addWidget(self.sync_robot_positions_button, 7, 1, 1, 2)
+        controls_layout.addWidget(self.update_robot_positions_button, 7, 3)
 
         strategy_controls = QGroupBox("Настройки стратегии и режим")
         strategy_layout = QGridLayout(strategy_controls)
@@ -732,6 +735,7 @@ class MainWindow(QMainWindow):
             self.apply_checked_shares_button,
             self.clear_selected_shares_button,
             self.sync_robot_positions_button,
+            self.update_robot_positions_button,
             self.save_state_button,
             self.reset_state_button,
             self.manual_buy_button,
@@ -1512,6 +1516,82 @@ class MainWindow(QMainWindow):
 
         self.account_id_edit.setText(account_id_item.text())
         self._log(f"Account ID выбран из таблицы: {account_id_item.text()}")
+
+    def update_robot_positions_from_table(self) -> None:
+        if self.robot_is_running:
+            QMessageBox.warning(
+                self,
+                "Робот включён",
+                "Лоты робота нельзя редактировать во время работы робота.",
+            )
+            return
+
+        changed_count = 0
+
+        for row in range(self.robot_positions_table.rowCount()):
+            name_item = self.robot_positions_table.item(row, 0)
+            robot_lots_item = self.robot_positions_table.item(row, 2)
+            broker_lots_item = self.robot_positions_table.item(row, 3)
+            account_id_item = self.robot_positions_table.item(row, 7)
+            instrument_uid_item = self.robot_positions_table.item(row, 8)
+
+            if (
+                name_item is None
+                or robot_lots_item is None
+                or broker_lots_item is None
+                or account_id_item is None
+                or instrument_uid_item is None
+            ):
+                continue
+
+            raw_robot_lots = robot_lots_item.text().strip()
+            raw_broker_lots = broker_lots_item.text().strip()
+
+            try:
+                robot_lots = int(raw_robot_lots)
+                broker_lots = int(raw_broker_lots)
+            except ValueError:
+                QMessageBox.warning(
+                    self,
+                    "Ошибка",
+                    (
+                        "Количество лотов у робота должно быть целым числом. "
+                        f"Строка: {name_item.text()}"
+                    ),
+                )
+                return
+
+            if robot_lots < 0:
+                QMessageBox.warning(
+                    self,
+                    "Ошибка",
+                    f"Количество лотов у робота не может быть меньше 0. Строка: {name_item.text()}",
+                )
+                return
+
+            if robot_lots > broker_lots:
+                QMessageBox.warning(
+                    self,
+                    "Ошибка",
+                    (
+                        "Лотов у робота не может быть больше, чем лотов у брокера. "
+                        f"Строка: {name_item.text()}, робот={robot_lots}, брокер={broker_lots}"
+                    ),
+                )
+                return
+
+            changed = set_robot_position_lots(
+                account_id=account_id_item.text(),
+                instrument_uid=instrument_uid_item.text(),
+                robot_lots=robot_lots,
+                reason="Ручная корректировка через таблицу Позиции робота.",
+            )
+
+            if changed:
+                changed_count += 1
+
+        self.refresh_robot_positions_table()
+        self._log(f"Лоты робота обновлены из таблицы. Изменено строк: {changed_count}")
 
     def sync_robot_positions(self) -> None:
         if self.robot_is_running:

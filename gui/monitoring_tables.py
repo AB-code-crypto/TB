@@ -1,5 +1,6 @@
 from datetime import datetime
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QHeaderView, QTableWidget, QTableWidgetItem
 
 from bd.growth_current_state import list_growth_current_states
@@ -38,7 +39,20 @@ def _set_table_value(
     column: int,
     value: object,
 ) -> None:
-    table.setItem(row, column, QTableWidgetItem(_format_table_value(value)))
+    item = QTableWidgetItem(_format_table_value(value))
+    item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+    table.setItem(row, column, item)
+
+
+def _set_editable_table_value(
+    table: QTableWidget,
+    row: int,
+    column: int,
+    value: object,
+) -> None:
+    item = QTableWidgetItem(_format_table_value(value))
+    item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
+    table.setItem(row, column, item)
 
 
 def _fit_table_columns(table: QTableWidget) -> None:
@@ -53,12 +67,14 @@ def fill_robot_positions_table(table: QTableWidget) -> None:
 
     headers = [
         "Название",
-        "Лотов робота",
-        "Средняя цена робота",
+        "Средняя цена лота",
+        "Лотов у робота",
         "Лотов у брокера",
         "Внешних лотов клиента",
         "Комментарий",
         "Синхронизация UTC",
+        "account_id",
+        "instrument_uid",
     ]
 
     table.setColumnCount(len(headers))
@@ -67,12 +83,17 @@ def fill_robot_positions_table(table: QTableWidget) -> None:
 
     for row_index, position in enumerate(positions):
         _set_table_value(table, row_index, 0, position.name)
-        _set_table_value(table, row_index, 1, position.robot_lots)
-        _set_table_value(table, row_index, 2, position.avg_price)
+        _set_table_value(table, row_index, 1, position.avg_price)
+        _set_editable_table_value(table, row_index, 2, position.robot_lots)
         _set_table_value(table, row_index, 3, position.last_broker_lots)
         _set_table_value(table, row_index, 4, position.external_lots)
         _set_table_value(table, row_index, 5, position.sync_note)
         _set_table_value(table, row_index, 6, position.last_sync_at_utc)
+        _set_table_value(table, row_index, 7, position.account_id)
+        _set_table_value(table, row_index, 8, position.instrument_uid)
+
+    table.setColumnHidden(7, True)
+    table.setColumnHidden(8, True)
 
     _fit_table_columns(table)
 
