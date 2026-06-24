@@ -138,8 +138,8 @@ class MainWindow(QMainWindow):
         self.async_task_success_handlers: dict[str, Callable[[Any], None]] = {}
         self.async_task_error_handlers: dict[str, Callable[[str], None] | None] = {}
 
-        self.setWindowTitle("TBank Robot — GUI v0.1")
-        self.resize(900, 900)
+        self.setWindowTitle("TBank Robot — GUI v 1.0")
+        self._apply_saved_window_size(saved_settings)
 
         self.token_edit = QLineEdit(initial_token)
         self.token_edit.setEchoMode(QLineEdit.EchoMode.Password)
@@ -179,7 +179,7 @@ class MainWindow(QMainWindow):
         self.manual_limit_offset_edit = QLineEdit("0")
 
         self.manual_last_price_button = QPushButton("Получить последнюю цену")
-        self.manual_last_price_label = QLabel("Последняя цена: —")
+        self.manual_last_price_label = QLabel("—")
         self.manual_last_price_label.setWordWrap(True)
 
         self.qualified_investor_checkbox = QCheckBox("Я квалифицированный инвестор")
@@ -248,6 +248,34 @@ class MainWindow(QMainWindow):
             f"Account ID: {self.account_id_edit.text().strip() if self.account_id_edit.text().strip() else 'не задан'}"
         )
         self._log(f"Сохранённых рабочих акций загружено: {len(self.selected_shares_by_uid)}")
+
+    def _apply_saved_window_size(self, settings: dict[str, str]) -> None:
+        width = 900
+        height = 900
+
+        if "window_width" in settings and "window_height" in settings:
+            try:
+                width = int(settings["window_width"])
+                height = int(settings["window_height"])
+            except ValueError as error:
+                raise ValueError("Сохранённый размер окна должен быть целым числом.") from error
+
+            if width <= 0 or height <= 0:
+                raise ValueError("Сохранённый размер окна должен быть больше 0.")
+
+        self.resize(width, height)
+
+    def _save_window_size(self) -> None:
+        save_app_settings(
+            {
+                "window_width": str(self.width()),
+                "window_height": str(self.height()),
+            }
+        )
+
+    def closeEvent(self, event) -> None:
+        self._save_window_size()
+        super().closeEvent(event)
 
     def _build_ui(self) -> None:
         root = QWidget()
@@ -1547,13 +1575,9 @@ class MainWindow(QMainWindow):
             sep=" ",
             timespec="seconds",
         )
-        text = (
-            f"{last_price.price} ₽ | "
-            f"{share.ticker}_{share.class_code} | "
-            f"{price_time} UTC"
-        )
+        text = f"{last_price.price} ₽ | {price_time} UTC"
 
-        self.manual_last_price_label.setText(f"Последняя цена: {text}")
+        self.manual_last_price_label.setText(text)
         self._log(f"Последняя цена получена: {text}")
 
     def manual_market_buy(self) -> None:
@@ -1832,8 +1856,13 @@ class MainWindow(QMainWindow):
             f"status={order_result.execution_report_status}, "
             f"исполнено лотов={order_result.lots_executed}."
         )
-        self._log("Обновляю активные позиции после ручной заявки.")
-        self.load_positions()
+
+        if order_type == "LIMIT":
+            self._log("Обновляю активные заявки после лимитной заявки.")
+            self.load_active_orders()
+        else:
+            self._log("Обновляю активные позиции после рыночной заявки.")
+            self.load_positions()
 
     def _get_token(self) -> str:
         token = self.token_edit.text().strip()
