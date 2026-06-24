@@ -216,17 +216,17 @@ class MainWindow(QMainWindow):
         controls_layout.addWidget(QLabel("Account ID:"), 1, 0)
         controls_layout.addWidget(self.account_id_edit, 1, 1, 1, 3)
 
-        accounts_button = QPushButton("Получить аккаунты")
+        self.accounts_button = QPushButton("Получить аккаунты")
         balance_button = QPushButton("Получить баланс")
         positions_button = QPushButton("Получить позиции")
         active_orders_button = QPushButton("Активные заявки")
 
-        accounts_button.clicked.connect(self.load_accounts)
+        self.accounts_button.clicked.connect(self.load_accounts)
         balance_button.clicked.connect(self.load_balance)
         positions_button.clicked.connect(self.load_positions)
         active_orders_button.clicked.connect(self.load_active_orders)
 
-        controls_layout.addWidget(accounts_button, 2, 0)
+        controls_layout.addWidget(self.accounts_button, 2, 0)
         controls_layout.addWidget(balance_button, 2, 1)
         controls_layout.addWidget(positions_button, 2, 2)
         controls_layout.addWidget(active_orders_button, 2, 3)
@@ -234,9 +234,9 @@ class MainWindow(QMainWindow):
         controls_layout.addWidget(QLabel("Акции:"), 3, 0)
         controls_layout.addWidget(self.qualified_investor_checkbox, 3, 1, 1, 2)
 
-        shares_button = QPushButton("Получить акции")
-        shares_button.clicked.connect(self.load_shares)
-        controls_layout.addWidget(shares_button, 3, 3)
+        self.shares_button = QPushButton("Получить акции")
+        self.shares_button.clicked.connect(self.load_shares)
+        controls_layout.addWidget(self.shares_button, 3, 3)
 
         self.qualified_investor_checkbox.toggled.connect(
             lambda checked: self.refresh_shares_filters_label()
@@ -248,12 +248,12 @@ class MainWindow(QMainWindow):
         selected_prices_button = QPushButton("Last prices по рабочим акциям")
         selected_prices_button.clicked.connect(self.load_last_prices_for_selected_shares)
 
-        clear_selected_button = QPushButton("Очистить рабочие акции")
-        clear_selected_button.clicked.connect(self.clear_selected_shares)
+        self.clear_selected_shares_button = QPushButton("Очистить рабочие акции")
+        self.clear_selected_shares_button.clicked.connect(self.clear_selected_shares)
 
         controls_layout.addWidget(QLabel("Рабочие акции:"), 5, 0)
         controls_layout.addWidget(selected_prices_button, 5, 1, 1, 2)
-        controls_layout.addWidget(clear_selected_button, 5, 3)
+        controls_layout.addWidget(self.clear_selected_shares_button, 5, 3)
 
         controls_layout.addWidget(QLabel("Instrument IDs:"), 6, 0)
         controls_layout.addWidget(self.instrument_ids_edit, 6, 1, 1, 2)
@@ -313,32 +313,32 @@ class MainWindow(QMainWindow):
         strategy_layout.addWidget(QLabel("Ручной инструмент:"), 3, 0)
         strategy_layout.addWidget(self.manual_instrument_id_edit, 3, 1)
 
-        strategy_layout.addWidget(QLabel("Сумма покупки, ₽:"), 3, 2)
+        strategy_layout.addWidget(QLabel("Сумма одной покупки, ₽:"), 3, 2)
         strategy_layout.addWidget(self.manual_buy_amount_edit, 3, 3)
 
         strategy_layout.addWidget(QLabel("Объём продажи, лоты:"), 4, 0)
         strategy_layout.addWidget(self.manual_sell_lots_edit, 4, 1)
 
-        manual_buy_button = QPushButton("Купить вручную")
-        manual_sell_button = QPushButton("Продать вручную")
+        self.manual_buy_button = QPushButton("Купить вручную")
+        self.manual_sell_button = QPushButton("Продать вручную")
 
-        manual_buy_button.clicked.connect(self.manual_buy_placeholder)
-        manual_sell_button.clicked.connect(self.manual_sell_placeholder)
+        self.manual_buy_button.clicked.connect(self.manual_buy_placeholder)
+        self.manual_sell_button.clicked.connect(self.manual_sell_placeholder)
 
-        strategy_layout.addWidget(manual_buy_button, 4, 2)
-        strategy_layout.addWidget(manual_sell_button, 4, 3)
+        strategy_layout.addWidget(self.manual_buy_button, 4, 2)
+        strategy_layout.addWidget(self.manual_sell_button, 4, 3)
         strategy_layout.addWidget(QLabel("Разрешения:"), 5, 0)
         strategy_layout.addWidget(self.allow_buy_checkbox, 5, 1)
         strategy_layout.addWidget(self.allow_sell_checkbox, 5, 2)
 
 
-        save_state_button = QPushButton("Сохранить настройки")
-        save_state_button.clicked.connect(self.save_current_state)
+        self.save_state_button = QPushButton("Сохранить настройки")
+        self.save_state_button.clicked.connect(self.save_current_state)
 
-        reset_state_button = QPushButton("Сбросить настройки")
-        reset_state_button.clicked.connect(self.reset_current_state)
-        strategy_layout.addWidget(save_state_button, 6, 0, 1, 2)
-        strategy_layout.addWidget(reset_state_button, 6, 2, 1, 2)
+        self.reset_state_button = QPushButton("Сбросить настройки")
+        self.reset_state_button.clicked.connect(self.reset_current_state)
+        strategy_layout.addWidget(self.save_state_button, 6, 0, 1, 2)
+        strategy_layout.addWidget(self.reset_state_button, 6, 2, 1, 2)
 
 
         self.accounts_table.cellDoubleClicked.connect(self.select_account_from_table)
@@ -543,6 +543,7 @@ class MainWindow(QMainWindow):
         self.robot_is_running = False
         self.robot_status_label.setText("Робот: выключен")
         self._set_robot_visual_state("stopped")
+        self._set_robot_inputs_locked(False)
 
         self.selected_shares_by_uid.clear()
         self.refresh_selected_shares_table()
@@ -646,6 +647,10 @@ class MainWindow(QMainWindow):
             self.bot_money_limit_edit,
             "Лимит денег для бота",
         )
+        manual_buy_amount = self._parse_decimal_field(
+            self.manual_buy_amount_edit,
+            "Сумма одной покупки, ₽",
+        )
 
         if growth_percent <= 0:
             raise ValueError("Рост для покупки должен быть больше 0.")
@@ -659,6 +664,9 @@ class MainWindow(QMainWindow):
         if bot_money_limit <= 0:
             raise ValueError("Лимит денег для бота должен быть больше 0.")
 
+        if manual_buy_amount <= 0:
+            raise ValueError("Сумма одной покупки должна быть больше 0.")
+
         return {
             "growth_percent": growth_percent,
             "growth_candle_interval": growth_candle_interval,
@@ -669,10 +677,65 @@ class MainWindow(QMainWindow):
             "take_profit_percent": take_profit_percent,
             "stop_loss_percent": stop_loss_percent,
             "bot_money_limit": bot_money_limit,
+            "manual_buy_amount": manual_buy_amount,
         }
 
+    def _set_robot_inputs_locked(self, locked: bool) -> None:
+        enabled = not locked
+
+        widgets = [
+            self.token_edit,
+            self.account_id_edit,
+            self.qualified_investor_checkbox,
+            self.growth_percent_edit,
+            self.growth_candle_interval_combo,
+            self.scan_interval_seconds_edit,
+            self.max_price_age_seconds_edit,
+            self.price_snapshot_retention_days_edit,
+            self.take_profit_percent_edit,
+            self.stop_loss_percent_edit,
+            self.bot_money_limit_edit,
+            self.manual_mode_checkbox,
+            self.allow_buy_checkbox,
+            self.allow_sell_checkbox,
+            self.manual_instrument_id_edit,
+            self.manual_buy_amount_edit,
+            self.manual_sell_lots_edit,
+            self.accounts_button,
+            self.shares_button,
+            self.apply_checked_shares_button,
+            self.clear_selected_shares_button,
+            self.save_state_button,
+            self.reset_state_button,
+            self.manual_buy_button,
+            self.manual_sell_button,
+            self.shares_table,
+            self.selected_shares_table,
+        ]
+
+        for widget in widgets:
+            widget.setEnabled(enabled)
+
+    def _reject_robot_start(self, message: str) -> None:
+        self.robot_is_running = False
+        self._set_robot_inputs_locked(False)
+        self._set_robot_visual_state("stopped")
+        self._log(f"Робот не включён: {message}")
+        QMessageBox.warning(self, "Робот не включён", message)
+
+    def _get_robot_start_form(self) -> tuple[str, str, dict[str, object]]:
+        token = self._get_token()
+        account_id = self._get_account_id()
+
+        if not self.selected_shares_by_uid:
+            raise ValueError("Рабочий список акций пуст. Сначала выберите акции.")
+
+        settings = self._get_strategy_settings()
+
+        return token, account_id, settings
+
     def start_robot_placeholder(self) -> None:
-        if self.robot_is_running:
+        if self.robot_is_running or self.growth_monitor_worker is not None:
             self._set_robot_visual_state("running")
             QMessageBox.information(
                 self,
@@ -681,36 +744,147 @@ class MainWindow(QMainWindow):
             )
             return
 
-        if not self.token_edit.text().strip():
-            self._set_robot_visual_state("stopped")
-            QMessageBox.warning(
-                self,
-                "Ошибка",
-                "Токен не задан.",
-            )
-            return
-
-        if not self.selected_shares_by_uid:
-            self._set_robot_visual_state("stopped")
-            QMessageBox.warning(
-                self,
-                "Ошибка",
-                "Рабочий список акций пуст. Сначала выберите акции.",
-            )
-            return
-
         try:
-            settings = self._get_strategy_settings()
+            token, account_id, settings = self._get_robot_start_form()
         except ValueError as error:
-            self._set_robot_visual_state("stopped")
-            QMessageBox.warning(self, "Ошибка настроек стратегии", str(error))
+            self._reject_robot_start(str(error))
             return
 
+        client_is_qualified = self.qualified_investor_checkbox.isChecked()
+
+        self._set_robot_inputs_locked(True)
+        self._set_robot_visual_state("starting")
+        self._log("Проверяю token/account_id через T-Invest API.")
+        self._log("Проверяю рабочие акции через T-Invest API.")
+
+        async def task():
+            async with AsyncClient(token) as client:
+                accounts = await get_accounts(client)
+                shares = await get_shares(client)
+
+                return accounts, shares
+
+        def on_success(result: tuple[list[TBankAccount], list[TBankShare]]) -> None:
+            self._handle_robot_start_validation_success(
+                result=result,
+                account_id=account_id,
+                settings=settings,
+                client_is_qualified=client_is_qualified,
+            )
+
+        self._run_async_task(
+            "robot_start_validation",
+            task,
+            on_success,
+            self._handle_robot_start_validation_error,
+        )
+
+    def _handle_robot_start_validation_success(
+        self,
+        result: tuple[list[TBankAccount], list[TBankShare]],
+        account_id: str,
+        settings: dict[str, object],
+        client_is_qualified: bool,
+    ) -> None:
+        accounts, shares = result
+
+        account = next(
+            (
+                current_account
+                for current_account in accounts
+                if current_account.account_id == account_id
+            ),
+            None,
+        )
+
+        if account is None:
+            available_account_ids = ", ".join(
+                current_account.account_id
+                for current_account in accounts
+            )
+
+            if not available_account_ids:
+                available_account_ids = "нет доступных аккаунтов"
+
+            self._reject_robot_start(
+                f"Account ID не найден среди аккаунтов T-Invest: {account_id}. "
+                f"Доступные account_id: {available_account_ids}"
+            )
+            return
+
+        available_shares = self._filter_available_shares(
+            shares=shares,
+            client_is_qualified=client_is_qualified,
+        )
+        available_shares_by_uid = {
+            share.uid: share
+            for share in available_shares
+        }
+        selected_uids = list(self.selected_shares_by_uid)
+
+        invalid_selected_shares: list[str] = []
+
+        for uid in selected_uids:
+            if uid in available_shares_by_uid:
+                continue
+
+            share = self.selected_shares_by_uid[uid]
+            invalid_selected_shares.append(
+                f"{share.ticker}_{share.class_code} ({uid})"
+            )
+
+        if invalid_selected_shares:
+            shown_items = "\n".join(
+                f"- {item}"
+                for item in invalid_selected_shares[:20]
+            )
+
+            if len(invalid_selected_shares) > 20:
+                shown_items += (
+                    f"\n... ещё {len(invalid_selected_shares) - 20}"
+                )
+
+            self._reject_robot_start(
+                "Некоторые рабочие акции не прошли текущую проверку через API "
+                "и не могут использоваться при запуске робота:\n"
+                f"{shown_items}"
+            )
+            return
+
+        self.all_shares = shares
+        self.available_shares = available_shares
+        self.selected_shares_by_uid = {
+            uid: available_shares_by_uid[uid]
+            for uid in selected_uids
+        }
+
+        self.refresh_available_shares_table()
+        self.refresh_selected_shares_table()
+
+        self._start_robot_after_validation(
+            settings=settings,
+            account=account,
+        )
+
+    def _handle_robot_start_validation_error(self, error_text: str) -> None:
+        self._reject_robot_start(
+            "Проверка token/account_id через T-Invest API не пройдена.\n\n"
+            f"{error_text}"
+        )
+
+    def _start_robot_after_validation(
+        self,
+        settings: dict[str, object],
+        account: TBankAccount,
+    ) -> None:
         self.save_current_state()
 
         self.robot_is_running = True
+        self._set_robot_inputs_locked(True)
         self._set_robot_visual_state("running")
 
+        self._log("Проверка token/account_id через API пройдена.")
+        self._log(f"Account ID подтверждён: {account.account_id} / {account.name}")
         self._log("Робот включён. Режим: наблюдение за ростом без отправки заявок.")
         self._log(f"Рабочих акций: {len(self.selected_shares_by_uid)}")
         self._log(f"Рост для покупки: {settings['growth_percent']}%")
@@ -722,6 +896,7 @@ class MainWindow(QMainWindow):
         self._log(
             f"Хранение снимков цен: {settings['price_snapshot_retention_days']} дней."
         )
+        self._log(f"Сумма одной покупки: {settings['manual_buy_amount']} ₽")
         self._log("Торговые заявки пока не отправляются.")
 
         thread = QThread(self)
@@ -749,6 +924,7 @@ class MainWindow(QMainWindow):
     def stop_robot_placeholder(self) -> None:
         if self.growth_monitor_worker is None:
             self.robot_is_running = False
+            self._set_robot_inputs_locked(False)
             self._set_robot_visual_state("stopped")
             self._log("Мониторинг не был запущен.")
             return
@@ -783,11 +959,13 @@ class MainWindow(QMainWindow):
 
     def _on_growth_monitor_finished(self) -> None:
         self.robot_is_running = False
+        self._set_robot_inputs_locked(False)
         self._set_robot_visual_state("stopped")
         self._log("Мониторинг остановлен.")
 
     def _on_growth_monitor_failed(self, error_text: str) -> None:
         self.robot_is_running = False
+        self._set_robot_inputs_locked(False)
         self._set_robot_visual_state("error")
         self._log(f"Ошибка мониторинга: {error_text}")
 
@@ -803,7 +981,32 @@ class MainWindow(QMainWindow):
 
         self.robot_toggle_button.blockSignals(True)
 
-        if state == "running":
+        if state == "starting":
+            self.robot_is_running = False
+            self.robot_status_label.setText("Робот: проверка запуска")
+            self.robot_status_label.setStyleSheet(
+                "font-weight: bold; color: #8a5a00;"
+            )
+            self.robot_toggle_button.setChecked(True)
+            self.robot_toggle_button.setEnabled(False)
+            self.robot_toggle_button.setText("Проверка запуска...")
+            self.robot_toggle_button.setToolTip(
+                "Проверяем token, account_id, рабочие акции и настройки."
+            )
+            self.robot_toggle_button.setStyleSheet(
+                """
+                QPushButton {
+                    background-color: #fff0b3;
+                    color: #6b4a00;
+                    font-weight: bold;
+                    border: 1px solid #d6b656;
+                    border-radius: 5px;
+                    padding: 6px 12px;
+                }
+                """
+            )
+
+        elif state == "running":
             self.robot_is_running = True
             self.robot_status_label.setText("Робот: включён")
             self.robot_status_label.setStyleSheet(
@@ -947,7 +1150,7 @@ class MainWindow(QMainWindow):
             instrument_id = self._get_manual_instrument_id()
             buy_amount = self._parse_decimal_field(
                 self.manual_buy_amount_edit,
-                "Сумма покупки",
+                "Сумма одной покупки, ₽",
             )
         except ValueError as error:
             QMessageBox.warning(self, "Ошибка ручной покупки", str(error))
@@ -957,7 +1160,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(
                 self,
                 "Ошибка ручной покупки",
-                "Сумма покупки должна быть больше 0.",
+                "Сумма одной покупки должна быть больше 0.",
             )
             return
 
@@ -1031,6 +1234,7 @@ class MainWindow(QMainWindow):
         name: str,
         task_factory: Callable[[], Coroutine[Any, Any, object]],
         on_success: Callable[[Any], None],
+        on_error: Callable[[str], None] | None = None,
     ) -> None:
         self._log(f"Старт задачи: {name}")
 
@@ -1052,9 +1256,10 @@ class MainWindow(QMainWindow):
             )
         )
         worker.failed.connect(
-            lambda error, task_name=name: self._handle_error(
+            lambda error, task_name=name, error_handler=on_error: self._handle_error(
                 task_name,
                 error,
+                error_handler,
             )
         )
 
@@ -1088,8 +1293,18 @@ class MainWindow(QMainWindow):
         self._log(f"Задача выполнена: {name}")
         on_success(result)
 
-    def _handle_error(self, name: str, error: str) -> None:
+    def _handle_error(
+        self,
+        name: str,
+        error: str,
+        on_error: Callable[[str], None] | None = None,
+    ) -> None:
         self._log(f"Ошибка в задаче {name}: {error}")
+
+        if on_error is not None:
+            on_error(error)
+            return
+
         QMessageBox.critical(self, f"Ошибка: {name}", error)
 
     def _log(self, message: str) -> None:
@@ -1123,6 +1338,14 @@ class MainWindow(QMainWindow):
         return item
 
     def select_account_from_table(self, row: int, column: int) -> None:
+        if self.robot_is_running:
+            QMessageBox.warning(
+                self,
+                "Робот включён",
+                "Account ID нельзя менять во время работы робота.",
+            )
+            return
+
         account_id_item = self.accounts_table.item(row, 0)
 
         if account_id_item is None:
@@ -1162,7 +1385,7 @@ class MainWindow(QMainWindow):
             rows,
         )
 
-        if len(accounts) == 1:
+        if len(accounts) == 1 and not self.robot_is_running:
             self.account_id_edit.setText(accounts[0].account_id)
             self._log(f"Account ID выбран автоматически: {accounts[0].account_id}")
 
@@ -1315,6 +1538,14 @@ class MainWindow(QMainWindow):
         self.tabs.setCurrentWidget(self.orders_table)
 
     def load_shares(self) -> None:
+        if self.robot_is_running:
+            QMessageBox.warning(
+                self,
+                "Робот включён",
+                "Список акций нельзя обновлять во время работы робота.",
+            )
+            return
+
         try:
             token = self._get_token()
         except ValueError as error:
@@ -1491,6 +1722,14 @@ class MainWindow(QMainWindow):
         self.shares_table.verticalHeader().setVisible(False)
 
     def apply_checked_shares_selection(self) -> None:
+        if self.robot_is_running:
+            QMessageBox.warning(
+                self,
+                "Робот включён",
+                "Рабочие акции нельзя менять во время работы робота.",
+            )
+            return
+
         selected_shares: dict[str, TBankShare] = {}
 
         for row in range(self.shares_table.rowCount()):
@@ -1573,6 +1812,14 @@ class MainWindow(QMainWindow):
         self._log(f"Всего рабочих акций выбрано: {len(self.selected_shares_by_uid)}")
 
     def clear_selected_shares(self) -> None:
+        if self.robot_is_running:
+            QMessageBox.warning(
+                self,
+                "Робот включён",
+                "Рабочие акции нельзя очищать во время работы робота.",
+            )
+            return
+
         self.selected_shares_by_uid.clear()
         self.refresh_selected_shares_table()
         self.refresh_available_shares_table()
