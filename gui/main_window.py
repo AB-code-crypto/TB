@@ -1658,6 +1658,8 @@ class MainWindow(QMainWindow):
             settings=settings,
             account=account,
         )
+        self.monitoring_tabs.setCurrentWidget(self.growth_current_table)
+        self.tabs.setCurrentWidget(self.monitoring_tabs)
 
     def sync_robot_positions(self) -> None:
         if self.robot_is_running:
