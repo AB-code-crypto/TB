@@ -160,7 +160,6 @@ def fill_growth_current_table(table: QTableWidget) -> None:
         "Цена UTC",
         "Источник",
         "Цикл",
-        "Обновлено UTC",
     ]
 
     table.setColumnCount(len(headers))
@@ -179,10 +178,8 @@ def fill_growth_current_table(table: QTableWidget) -> None:
         _set_table_value(table, row_index, 8, state.last_price_time_utc)
         _set_table_value(table, row_index, 9, state.base_source)
         _set_table_value(table, row_index, 10, state.scan_cycle_id)
-        _set_table_value(table, row_index, 11, state.calculated_at_utc)
 
     _fit_table_columns(table)
-
 
 def fill_growth_signals_table(table: QTableWidget) -> None:
     signals = list_recent_growth_signals(limit=100)

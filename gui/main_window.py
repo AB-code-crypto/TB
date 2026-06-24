@@ -138,7 +138,7 @@ class MainWindow(QMainWindow):
         self.async_task_error_handlers: dict[str, Callable[[str], None] | None] = {}
 
         self.setWindowTitle("TBank Robot — GUI v0.1")
-        self.resize(1450, 900)
+        self.resize(1230, 900)
 
         self.token_edit = QLineEdit(initial_token)
         self.token_edit.setEchoMode(QLineEdit.EchoMode.Password)
@@ -213,6 +213,7 @@ class MainWindow(QMainWindow):
         self.cancel_robot_start_button = QPushButton("Отменить запуск")
 
         self.selected_shares_table = QTableWidget()
+        self.selected_shares_tab_widget = QWidget()
         self.robot_positions_tab_widget = QWidget()
         self.robot_positions_table = QTableWidget()
         self.growth_signals_table = QTableWidget()
@@ -271,8 +272,8 @@ class MainWindow(QMainWindow):
         controls_layout.addWidget(self.shares_button, 2, 3)
 
         controls_layout.addWidget(QLabel("Акции:"), 3, 0)
-        controls_layout.addWidget(self.qualified_investor_checkbox, 3, 1, 1, 3)
-        controls_layout.addWidget(self.only_liquid_shares_checkbox, 4, 1, 1, 3)
+        controls_layout.addWidget(self.qualified_investor_checkbox, 3, 1)
+        controls_layout.addWidget(self.only_liquid_shares_checkbox, 3, 2, 1, 2)
 
         self.qualified_investor_checkbox.toggled.connect(
             lambda checked: self.refresh_shares_after_filter_change()
@@ -281,15 +282,9 @@ class MainWindow(QMainWindow):
             lambda checked: self.refresh_shares_after_filter_change()
         )
 
-        controls_layout.addWidget(QLabel("Фильтры акций:"), 5, 0)
-        controls_layout.addWidget(self.shares_filters_label, 5, 1, 1, 3)
-
         self.clear_selected_shares_button = QPushButton("Очистить рабочие акции")
         self.clear_selected_shares_button.clicked.connect(self.clear_selected_shares)
         self.update_robot_positions_button.clicked.connect(self.update_robot_positions_from_table)
-
-        controls_layout.addWidget(QLabel("Рабочие акции:"), 6, 0)
-        controls_layout.addWidget(self.clear_selected_shares_button, 6, 1, 1, 3)
 
         strategy_controls = QGroupBox("Настройки стратегии и режим")
         strategy_layout = QGridLayout(strategy_controls)
@@ -350,6 +345,10 @@ class MainWindow(QMainWindow):
         shares_tab_layout.addWidget(self.shares_table)
         shares_tab_layout.addWidget(self.apply_checked_shares_button)
 
+        selected_shares_tab_layout = QVBoxLayout(self.selected_shares_tab_widget)
+        selected_shares_tab_layout.addWidget(self.selected_shares_table)
+        selected_shares_tab_layout.addWidget(self.clear_selected_shares_button)
+
         self.shares_search_edit.textChanged.connect(
             lambda text: self.apply_shares_search_filter()
         )
@@ -409,7 +408,7 @@ class MainWindow(QMainWindow):
         self.tabs = QTabWidget()
         self.tabs.addTab(self.info_tab_widget, "Инфо")
         self.tabs.addTab(self.shares_tab_widget, "Акции")
-        self.tabs.addTab(self.selected_shares_table, "Рабочие акции")
+        self.tabs.addTab(self.selected_shares_tab_widget, "Рабочие акции")
 
         self.cancel_robot_start_button.clicked.connect(self.cancel_robot_start_after_sync)
 
@@ -421,12 +420,30 @@ class MainWindow(QMainWindow):
         robot_positions_actions_layout.addWidget(self.cancel_robot_start_button, 0, 1)
         robot_positions_tab_layout.addLayout(robot_positions_actions_layout)
 
-        self.monitoring_tabs.addTab(self.growth_current_table, "Текущий рост")
-        self.monitoring_tabs.addTab(self.growth_signals_table, "Сигналы роста")
+        self.monitoring_tabs.setStyleSheet(
+            """
+            QTabBar::tab {
+                padding: 6px 12px;
+                color: #555555;
+            }
+            QTabBar::tab:selected {
+                font-weight: bold;
+                color: #111111;
+                background-color: #e8f0fe;
+                border: 1px solid #8aa7e8;
+                border-bottom: 3px solid #2f5fcb;
+            }
+            QTabBar::tab:!selected {
+                background-color: #f3f3f3;
+            }
+            """
+        )
+        self.monitoring_tabs.addTab(self.growth_current_table, "Рост сейчас")
+        self.monitoring_tabs.addTab(self.growth_signals_table, "Сигналы")
         self.monitoring_tabs.addTab(self.buy_intents_table, "Планы покупок")
-        self.monitoring_tabs.addTab(self.robot_orders_table, "Заявки робота")
-        self.monitoring_tabs.addTab(self.robot_positions_tab_widget, "Позиции робота")
-        self.monitoring_tabs.addTab(self.growth_cycles_table, "Циклы")
+        self.monitoring_tabs.addTab(self.robot_orders_table, "Заявки")
+        self.monitoring_tabs.addTab(self.robot_positions_tab_widget, "Позиции")
+        self.monitoring_tabs.addTab(self.growth_cycles_table, "Циклы сканирования")
         self.tabs.addTab(self.monitoring_tabs, "Мониторинг")
 
         self.tabs.addTab(self.log_edit, "Лог")
@@ -2755,7 +2772,13 @@ class MainWindow(QMainWindow):
         )
         self.shares_table.verticalHeader().setVisible(False)
         self.shares_table.setColumnHidden(1, True)   # номер строки больше не нужен в GUI
+        self.shares_table.setColumnHidden(4, True)   # class_code нужен коду, но не нужен клиенту
+        self.shares_table.setColumnHidden(7, True)   # currency нужен коду, но не нужен клиенту
+        self.shares_table.setColumnHidden(8, True)   # real_exchange нужен коду, но не нужен клиенту
         self.shares_table.setColumnHidden(9, True)   # uid: внутренний идентификатор инструмента
+        self.shares_table.setColumnHidden(10, True)  # api: служебный признак доступности API
+        self.shares_table.setColumnHidden(11, True)  # buy: служебный признак доступности покупки
+        self.shares_table.setColumnHidden(12, True)  # sell: служебный признак доступности продажи
         self.shares_table.setColumnHidden(16, True)  # required_tests: внутренний список тестов API
         self.shares_table.setSortingEnabled(True)
         self.shares_table.sortItems(0, Qt.SortOrder.DescendingOrder)
@@ -2796,7 +2819,7 @@ class MainWindow(QMainWindow):
             f"Выбрано: {len(self.selected_shares_by_uid)}"
         )
 
-        self.tabs.setCurrentWidget(self.selected_shares_table)
+        self.tabs.setCurrentWidget(self.selected_shares_tab_widget)
 
     def _find_available_share_by_uid(self, uid: str) -> TBankShare | None:
         for share in self.available_shares:
@@ -2828,7 +2851,7 @@ class MainWindow(QMainWindow):
         self._log(f"Акция добавлена в рабочий список: {share.ticker} / {share.name}")
         self._log(f"Всего рабочих акций выбрано: {len(self.selected_shares_by_uid)}")
 
-        self.tabs.setCurrentWidget(self.selected_shares_table)
+        self.tabs.setCurrentWidget(self.selected_shares_tab_widget)
 
     def remove_selected_share_from_table(self, row: int, column: int) -> None:
         uid_item = self.selected_shares_table.item(row, 8)
@@ -2899,5 +2922,8 @@ class MainWindow(QMainWindow):
             ],
             rows,
         )
+        self.selected_shares_table.setColumnHidden(3, True)  # class_code нужен коду, но не нужен клиенту
+        self.selected_shares_table.setColumnHidden(6, True)  # currency нужен коду, но не нужен клиенту
+        self.selected_shares_table.setColumnHidden(7, True)  # real_exchange нужен коду, но не нужен клиенту
         self.selected_shares_table.setColumnHidden(8, True)  # uid: нужен коду, но не нужен клиенту
 
