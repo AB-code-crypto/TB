@@ -123,6 +123,7 @@ class MainWindow(QMainWindow):
         self.growth_monitor_worker: GrowthMonitorWorker | None = None
         self.pending_robot_start_settings: dict[str, object] | None = None
         self.pending_robot_start_account: TBankAccount | None = None
+        self.manual_trade_share: TBankShare | None = None
 
         self.all_shares: list[TBankShare] = []
         self.available_shares: list[TBankShare] = []
@@ -196,6 +197,9 @@ class MainWindow(QMainWindow):
         self.positions_table = QTableWidget()
         self.orders_table = QTableWidget()
         self.cancel_active_order_button = QPushButton("Отменить выбранную активную заявку")
+        self.manual_trading_tab_widget = QWidget()
+        self.manual_instrument_info_table = QTableWidget()
+        self.refresh_manual_instrument_button = QPushButton("Обновить данные")
         self.info_tab_widget = QWidget()
         self.info_title_label = QLabel("")
         self.shares_table = QTableWidget()
@@ -323,48 +327,18 @@ class MainWindow(QMainWindow):
 
         strategy_layout.addWidget(self.robot_status_label, 2, 0)
         strategy_layout.addWidget(self.robot_toggle_button, 2, 1, 1, 2)
-        strategy_layout.addWidget(self.manual_mode_checkbox, 2, 3)
 
-        strategy_layout.addWidget(QLabel("Ручной инструмент:"), 3, 0)
-        strategy_layout.addWidget(self.manual_instrument_id_edit, 3, 1)
-
-        strategy_layout.addWidget(QLabel("Сумма одной покупки, ₽:"), 3, 2)
-        strategy_layout.addWidget(self.manual_buy_amount_edit, 3, 3)
-
-        strategy_layout.addWidget(QLabel("Объём продажи, лоты:"), 4, 0)
-        strategy_layout.addWidget(self.manual_sell_lots_edit, 4, 1)
-
-        self.manual_market_buy_button = QPushButton("Купить рынком")
-        self.manual_limit_buy_button = QPushButton("Купить лимитом")
-        self.manual_market_sell_button = QPushButton("Продать рынком")
-        self.manual_limit_sell_button = QPushButton("Продать лимитом")
-
-        self.manual_market_buy_button.clicked.connect(self.manual_market_buy)
-        self.manual_limit_buy_button.clicked.connect(self.manual_limit_buy)
-        self.manual_market_sell_button.clicked.connect(self.manual_market_sell)
-        self.manual_limit_sell_button.clicked.connect(self.manual_limit_sell)
-
-        strategy_layout.addWidget(QLabel("Отступ лимитной заявки, п.:"), 4, 2)
-        strategy_layout.addWidget(self.manual_limit_offset_edit, 4, 3)
-
-        strategy_layout.addWidget(QLabel("Ручная торговля:"), 5, 0)
-        strategy_layout.addWidget(self.manual_market_buy_button, 5, 1)
-        strategy_layout.addWidget(self.manual_limit_buy_button, 5, 2)
-        strategy_layout.addWidget(self.manual_market_sell_button, 5, 3)
-        strategy_layout.addWidget(self.manual_limit_sell_button, 5, 4)
-
-        strategy_layout.addWidget(QLabel("Разрешения:"), 6, 0)
-        strategy_layout.addWidget(self.allow_buy_checkbox, 6, 1)
-        strategy_layout.addWidget(self.allow_sell_checkbox, 6, 2)
-
+        strategy_layout.addWidget(QLabel("Разрешения:"), 3, 0)
+        strategy_layout.addWidget(self.allow_buy_checkbox, 3, 1)
+        strategy_layout.addWidget(self.allow_sell_checkbox, 3, 2)
 
         self.save_state_button = QPushButton("Сохранить настройки")
         self.save_state_button.clicked.connect(self.save_current_state)
 
         self.reset_state_button = QPushButton("Сбросить настройки")
         self.reset_state_button.clicked.connect(self.reset_current_state)
-        strategy_layout.addWidget(self.save_state_button, 7, 0, 1, 2)
-        strategy_layout.addWidget(self.reset_state_button, 7, 2, 1, 2)
+        strategy_layout.addWidget(self.save_state_button, 4, 0, 1, 2)
+        strategy_layout.addWidget(self.reset_state_button, 4, 2, 1, 2)
 
 
         self.accounts_table.cellDoubleClicked.connect(self.select_account_from_table)
@@ -389,6 +363,45 @@ class MainWindow(QMainWindow):
             lambda item: self.apply_shares_search_filter()
         )
 
+        self.manual_market_buy_button = QPushButton("Купить рынком")
+        self.manual_limit_buy_button = QPushButton("Купить лимитом")
+        self.manual_market_sell_button = QPushButton("Продать рынком")
+        self.manual_limit_sell_button = QPushButton("Продать лимитом")
+
+        self.refresh_manual_instrument_button.clicked.connect(self.refresh_manual_instrument_info)
+        self.manual_market_buy_button.clicked.connect(self.manual_market_buy)
+        self.manual_limit_buy_button.clicked.connect(self.manual_limit_buy)
+        self.manual_market_sell_button.clicked.connect(self.manual_market_sell)
+        self.manual_limit_sell_button.clicked.connect(self.manual_limit_sell)
+
+        manual_trading_layout = QVBoxLayout(self.manual_trading_tab_widget)
+        manual_trading_controls = QGroupBox("Ручная торговля")
+        manual_trading_controls_layout = QGridLayout(manual_trading_controls)
+
+        manual_trading_controls_layout.addWidget(QLabel("Инструмент:"), 0, 0)
+        manual_trading_controls_layout.addWidget(self.manual_instrument_id_edit, 0, 1, 1, 2)
+        manual_trading_controls_layout.addWidget(self.refresh_manual_instrument_button, 0, 3)
+
+        manual_trading_controls_layout.addWidget(self.manual_mode_checkbox, 1, 0, 1, 2)
+
+        manual_trading_controls_layout.addWidget(QLabel("Сумма покупки, ₽:"), 2, 0)
+        manual_trading_controls_layout.addWidget(self.manual_buy_amount_edit, 2, 1)
+
+        manual_trading_controls_layout.addWidget(QLabel("Объём продажи, лоты:"), 2, 2)
+        manual_trading_controls_layout.addWidget(self.manual_sell_lots_edit, 2, 3)
+
+        manual_trading_controls_layout.addWidget(QLabel("Отступ лимитной заявки, п.:"), 3, 0)
+        manual_trading_controls_layout.addWidget(self.manual_limit_offset_edit, 3, 1)
+
+        manual_trading_controls_layout.addWidget(self.manual_market_buy_button, 4, 0)
+        manual_trading_controls_layout.addWidget(self.manual_limit_buy_button, 4, 1)
+        manual_trading_controls_layout.addWidget(self.manual_market_sell_button, 4, 2)
+        manual_trading_controls_layout.addWidget(self.manual_limit_sell_button, 4, 3)
+
+        manual_trading_layout.addWidget(manual_trading_controls)
+        manual_trading_layout.addWidget(QLabel("Информация по инструменту:"))
+        manual_trading_layout.addWidget(self.manual_instrument_info_table)
+
         info_layout = QVBoxLayout(self.info_tab_widget)
         self.info_title_label.setStyleSheet("font-weight: bold;")
         self.info_title_label.setVisible(False)
@@ -405,6 +418,7 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.info_tab_widget, "Инфо")
         self.tabs.addTab(self.shares_tab_widget, "Акции")
         self.tabs.addTab(self.selected_shares_table, "Рабочие акции")
+        self.tabs.addTab(self.manual_trading_tab_widget, "Ручная торговля")
 
         self.cancel_robot_start_button.clicked.connect(self.cancel_robot_start_after_sync)
 
@@ -766,6 +780,7 @@ class MainWindow(QMainWindow):
             self.manual_buy_amount_edit,
             self.manual_sell_lots_edit,
             self.manual_limit_offset_edit,
+            self.refresh_manual_instrument_button,
             self.accounts_button,
             self.shares_button,
             self.apply_checked_shares_button,
@@ -1307,25 +1322,84 @@ class MainWindow(QMainWindow):
 
         return instrument_id
 
-    def _find_manual_share(self, instrument_id: str) -> TBankShare:
+    def _matches_manual_instrument_id(
+        self,
+        share: TBankShare,
+        instrument_id: str,
+    ) -> bool:
         normalized_instrument_id = instrument_id.strip().upper()
 
-        for share in self.selected_shares_by_uid.values():
-            if share.uid == instrument_id:
-                return share
-
-            if share.figi.upper() == normalized_instrument_id:
-                return share
-
-            if share.ticker.upper() == normalized_instrument_id:
-                return share
-
-            if f"{share.ticker}_{share.class_code}".upper() == normalized_instrument_id:
-                return share
-
-        raise ValueError(
-            "Инструмент для ручной сделки должен быть в рабочем списке акций."
+        return (
+            share.uid == instrument_id
+            or share.figi.upper() == normalized_instrument_id
+            or f"{share.ticker}_{share.class_code}".upper() == normalized_instrument_id
+            or (
+                share.class_code == "TQBR"
+                and share.ticker.upper() == normalized_instrument_id
+            )
         )
+
+    def _find_share_by_manual_instrument_id(
+        self,
+        shares: list[TBankShare],
+        instrument_id: str,
+    ) -> TBankShare:
+        for share in shares:
+            if self._matches_manual_instrument_id(share, instrument_id):
+                return share
+
+        raise ValueError(f"Акция не найдена: {instrument_id}")
+
+    def _validate_manual_trade_share(
+        self,
+        share: TBankShare,
+        client_is_qualified: bool,
+        side: str | None = None,
+    ) -> None:
+        if share.currency != "RUB":
+            raise ValueError("Для ручной торговли пока доступны только RUB-акции.")
+
+        if share.real_exchange != "REAL_EXCHANGE_MOEX":
+            raise ValueError("Для ручной торговли пока доступны только акции MOEX.")
+
+        if share.class_code != "TQBR":
+            raise ValueError("Для ручной торговли пока доступны только акции класса TQBR.")
+
+        if not share.api_trade_available_flag:
+            raise ValueError("По инструменту недоступна торговля через API.")
+
+        if share.blocked_tca_flag:
+            raise ValueError("Инструмент заблокирован для торговли.")
+
+        if share.for_qual_investor_flag and not client_is_qualified:
+            raise ValueError("Инструмент доступен только квалифицированному инвестору.")
+
+        if side == "BUY" and not share.buy_available_flag:
+            raise ValueError("Покупка по этому инструменту недоступна.")
+
+        if side == "SELL" and not share.sell_available_flag:
+            raise ValueError("Продажа по этому инструменту недоступна.")
+
+    def _get_current_manual_trade_share(self, side: str) -> TBankShare:
+        instrument_id = self._get_manual_instrument_id()
+
+        if self.manual_trade_share is None:
+            raise ValueError(
+                "Сначала нажмите 'Обновить данные' во вкладке 'Ручная торговля'."
+            )
+
+        if not self._matches_manual_instrument_id(self.manual_trade_share, instrument_id):
+            raise ValueError(
+                "Инструмент был изменён. Сначала обновите данные по новой акции."
+            )
+
+        self._validate_manual_trade_share(
+            share=self.manual_trade_share,
+            client_is_qualified=self.qualified_investor_checkbox.isChecked(),
+            side=side,
+        )
+
+        return self.manual_trade_share
 
     def _get_available_rub(self, balance: PortfolioBalance) -> Decimal:
         for money in balance.money:
@@ -1400,6 +1474,131 @@ class MainWindow(QMainWindow):
 
         return answer == QMessageBox.StandardButton.Yes
 
+    def refresh_manual_instrument_info(self) -> None:
+        try:
+            token = self._get_token()
+            account_id = self._get_account_id()
+            instrument_id = self._get_manual_instrument_id()
+        except ValueError as error:
+            QMessageBox.warning(self, "Ошибка", str(error))
+            return
+
+        client_is_qualified = self.qualified_investor_checkbox.isChecked()
+
+        async def task():
+            async with AsyncClient(token) as client:
+                shares = await get_shares(client)
+                share = self._find_share_by_manual_instrument_id(
+                    shares=shares,
+                    instrument_id=instrument_id,
+                )
+                self._validate_manual_trade_share(
+                    share=share,
+                    client_is_qualified=client_is_qualified,
+                )
+
+                last_price = await get_last_price(client, share.uid)
+                best_prices = await get_best_order_book_prices(
+                    client=client,
+                    instrument_id=share.uid,
+                    depth=1,
+                )
+                balance = await get_balance(client, account_id)
+                positions = await get_portfolio_positions(client, account_id)
+
+                broker_lots = 0
+
+                for position in positions:
+                    if position.instrument_uid == share.uid:
+                        broker_lots = int(position.quantity_lots)
+                        break
+
+                robot_position = get_robot_position(
+                    account_id=account_id,
+                    instrument_uid=share.uid,
+                )
+                robot_lots = (
+                    robot_position.robot_lots
+                    if robot_position is not None
+                    else 0
+                )
+                external_lots = max(broker_lots - robot_lots, 0)
+                available_rub = self._get_available_rub(balance)
+
+                return (
+                    share,
+                    last_price.price,
+                    last_price.time,
+                    best_prices.best_bid,
+                    best_prices.best_ask,
+                    available_rub,
+                    broker_lots,
+                    robot_lots,
+                    external_lots,
+                    share.uid in self.selected_shares_by_uid,
+                )
+
+        self._run_async_task(
+            "manual_instrument_info",
+            task,
+            self.show_manual_instrument_info,
+        )
+
+    def show_manual_instrument_info(self, result: tuple) -> None:
+        (
+            share,
+            last_price,
+            last_price_time_utc,
+            best_bid,
+            best_ask,
+            available_rub,
+            broker_lots,
+            robot_lots,
+            external_lots,
+            is_working_share,
+        ) = result
+
+        self.manual_trade_share = share
+
+        one_lot_last_price = last_price * Decimal(share.lot)
+        one_lot_best_ask = best_ask * Decimal(share.lot)
+        one_lot_best_bid = best_bid * Decimal(share.lot)
+
+        rows = [
+            ["Название", share.name],
+            ["Тикер", f"{share.ticker}_{share.class_code}"],
+            ["Текущая цена", last_price],
+            ["Время цены UTC", last_price_time_utc],
+            ["Best bid", best_bid],
+            ["Best ask", best_ask],
+            ["Акций в 1 лоте", share.lot],
+            ["Стоимость 1 лота по текущей цене", one_lot_last_price],
+            ["Стоимость 1 лота по best bid", one_lot_best_bid],
+            ["Стоимость 1 лота по best ask", one_lot_best_ask],
+            ["Шаг цены", share.min_price_increment],
+            ["Свободно RUB", available_rub],
+            ["Лотов у брокера", broker_lots],
+            ["Лотов у робота", robot_lots],
+            ["Внешних лотов клиента", external_lots],
+            ["В рабочих акциях", "да" if is_working_share else "нет"],
+            ["Покупка доступна", "да" if share.buy_available_flag else "нет"],
+            ["Продажа доступна", "да" if share.sell_available_flag else "нет"],
+            ["UID", share.uid],
+        ]
+
+        self._fill_table(
+            self.manual_instrument_info_table,
+            ["Параметр", "Значение"],
+            rows,
+        )
+
+        self.tabs.setCurrentWidget(self.manual_trading_tab_widget)
+        self._log(
+            "Данные ручной торговли обновлены: "
+            f"{share.ticker}_{share.class_code}, цена={last_price}, "
+            f"лот={share.lot}."
+        )
+
     def manual_market_buy(self) -> None:
         self._submit_manual_order(side="BUY", order_type="MARKET")
 
@@ -1458,8 +1657,7 @@ class MainWindow(QMainWindow):
         try:
             token = self._get_token()
             account_id = self._get_account_id()
-            instrument_id = self._get_manual_instrument_id()
-            share = self._find_manual_share(instrument_id)
+            share = self._get_current_manual_trade_share(side=side)
             limit_offset = self._parse_manual_limit_offset()
 
             if side == "BUY":
