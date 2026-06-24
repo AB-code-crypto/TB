@@ -2616,6 +2616,7 @@ class MainWindow(QMainWindow):
             QHeaderView.ResizeMode.ResizeToContents
         )
         self.orders_table.verticalHeader().setVisible(False)
+        self.orders_table.setColumnHidden(8, True)  # lots_exec сейчас не отображаем
 
         self._log(f"Получено активных заявок: {len(orders)}")
         self._show_info_table("Активные заявки", self.orders_table)
