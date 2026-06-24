@@ -53,6 +53,7 @@ from tbank.balance import PortfolioBalance, get_balance
 from tbank.positions import TBankPortfolioPosition, get_portfolio_positions
 from tbank.order_book import get_best_order_book_prices
 from tbank.order_execution import TBankPostOrderResult, cancel_order, post_limit_order, post_market_order
+from tbank.last_prices import get_last_price
 from tbank.shares import TBankShare, get_shares
 
 
@@ -138,7 +139,7 @@ class MainWindow(QMainWindow):
         self.async_task_error_handlers: dict[str, Callable[[str], None] | None] = {}
 
         self.setWindowTitle("TBank Robot — GUI v0.1")
-        self.resize(1000, 900)
+        self.resize(900, 900)
 
         self.token_edit = QLineEdit(initial_token)
         self.token_edit.setEchoMode(QLineEdit.EchoMode.Password)
@@ -176,6 +177,10 @@ class MainWindow(QMainWindow):
         self.manual_buy_amount_edit = QLineEdit("10000.00")
         self.manual_sell_lots_edit = QLineEdit("1")
         self.manual_limit_offset_edit = QLineEdit("0")
+
+        self.manual_last_price_button = QPushButton("Получить последнюю цену")
+        self.manual_last_price_label = QLabel("Последняя цена: —")
+        self.manual_last_price_label.setWordWrap(True)
 
         self.qualified_investor_checkbox = QCheckBox("Я квалифицированный инвестор")
         self.qualified_investor_checkbox.setChecked(False)
@@ -365,6 +370,7 @@ class MainWindow(QMainWindow):
         self.manual_limit_buy_button.clicked.connect(self.manual_limit_buy)
         self.manual_market_sell_button.clicked.connect(self.manual_market_sell)
         self.manual_limit_sell_button.clicked.connect(self.manual_limit_sell)
+        self.manual_last_price_button.clicked.connect(self.refresh_manual_last_price)
 
         manual_trading_controls = QGroupBox("Ручная торговля")
         manual_trading_controls_layout = QGridLayout(manual_trading_controls)
@@ -381,6 +387,9 @@ class MainWindow(QMainWindow):
 
         manual_trading_controls_layout.addWidget(QLabel("Отступ лимитной заявки, шагов:"), 2, 0)
         manual_trading_controls_layout.addWidget(self.manual_limit_offset_edit, 2, 1)
+
+        manual_trading_controls_layout.addWidget(self.manual_last_price_button, 2, 2)
+        manual_trading_controls_layout.addWidget(self.manual_last_price_label, 2, 3)
 
         manual_trading_controls_layout.addWidget(self.manual_market_buy_button, 3, 0)
         manual_trading_controls_layout.addWidget(self.manual_limit_buy_button, 3, 1)
@@ -788,6 +797,7 @@ class MainWindow(QMainWindow):
             self.manual_buy_amount_edit,
             self.manual_sell_lots_edit,
             self.manual_limit_offset_edit,
+            self.manual_last_price_button,
             self.accounts_button,
             self.shares_button,
             self.apply_checked_shares_button,
@@ -1485,6 +1495,66 @@ class MainWindow(QMainWindow):
         )
 
         return answer == QMessageBox.StandardButton.Yes
+
+    def _get_current_manual_quote_share(self) -> TBankShare:
+        instrument_id = self._get_manual_instrument_id()
+        shares = list(self.all_shares)
+
+        if not shares:
+            shares = list(self.selected_shares_by_uid.values())
+
+        if not shares:
+            raise ValueError(
+                "Список акций пуст. Сначала нажмите 'Получить акции' "
+                "или добавьте инструмент в рабочие акции."
+            )
+
+        share = self._find_share_by_manual_instrument_id(
+            shares=shares,
+            instrument_id=instrument_id,
+        )
+        self._validate_manual_trade_share(
+            share=share,
+            client_is_qualified=self.qualified_investor_checkbox.isChecked(),
+            side=None,
+        )
+
+        return share
+
+    def refresh_manual_last_price(self) -> None:
+        try:
+            token = self._get_token()
+            share = self._get_current_manual_quote_share()
+        except ValueError as error:
+            QMessageBox.warning(self, "Ошибка последней цены", str(error))
+            return
+
+        async def task():
+            async with AsyncClient(token) as client:
+                last_price = await get_last_price(client, share.uid)
+
+                return share, last_price
+
+        self._run_async_task(
+            "manual_last_price",
+            task,
+            self.show_manual_last_price,
+        )
+
+    def show_manual_last_price(self, result: tuple) -> None:
+        share, last_price = result
+        price_time = last_price.time.replace(tzinfo=None).isoformat(
+            sep=" ",
+            timespec="seconds",
+        )
+        text = (
+            f"{last_price.price} ₽ | "
+            f"{share.ticker}_{share.class_code} | "
+            f"{price_time} UTC"
+        )
+
+        self.manual_last_price_label.setText(f"Последняя цена: {text}")
+        self._log(f"Последняя цена получена: {text}")
 
     def manual_market_buy(self) -> None:
         self._submit_manual_order(side="BUY", order_type="MARKET")
