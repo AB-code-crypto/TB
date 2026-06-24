@@ -1623,22 +1623,23 @@ class MainWindow(QMainWindow):
         type_text = "лимитную" if order_type == "LIMIT" else "рыночную"
 
         if side == "BUY":
-            size_text = f"Сумма покупки: {buy_amount} ₽"
+            size_text = f"Сумма: {buy_amount} ₽"
         else:
             size_text = f"Лотов: {sell_lots}"
 
-        offset_text = (
-            f"Отступ от best price: {limit_offset}"
-            if order_type == "LIMIT"
-            else "Рыночная заявка без лимитной цены"
-        )
-        confirm_text = (
-            f"Отправить {type_text} заявку на {side_text}?\n\n"
-            f"Инструмент: {share.name} ({share.ticker}_{share.class_code})\n"
-            f"{size_text}\n"
-            f"{offset_text}\n\n"
-            "Заявка будет отправлена брокеру реально."
-        )
+        if order_type == "LIMIT":
+            confirm_text = (
+                f"{type_text.capitalize()} заявка на {side_text}\n\n"
+                f"{share.name} ({share.ticker}_{share.class_code})\n"
+                f"{size_text}\n"
+                f"Отступ от best price: {limit_offset}"
+            )
+        else:
+            confirm_text = (
+                f"{type_text.capitalize()} заявка на {side_text}\n\n"
+                f"{share.name} ({share.ticker}_{share.class_code})\n"
+                f"{size_text}"
+            )
 
         if not self._confirm_manual_order("Подтверждение ручной сделки", confirm_text):
             self._log("Ручная сделка отменена пользователем.")
