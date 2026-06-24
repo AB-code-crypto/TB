@@ -161,6 +161,13 @@ class MainWindow(QMainWindow):
         self.manual_mode_checkbox = QCheckBox("Ручной режим")
         self.manual_mode_checkbox.setChecked(False)
 
+        self.auto_trading_enabled_checkbox = QCheckBox("Реальная автоторговля")
+        self.auto_trading_enabled_checkbox.setChecked(False)
+        self.auto_trading_enabled_checkbox.setToolTip(
+            "Если включено — робот будет отправлять реальные рыночные заявки. "
+            "По умолчанию всегда выключено."
+        )
+
         self.allow_buy_checkbox = QCheckBox("Покупки разрешены")
         self.allow_buy_checkbox.setChecked(True)
         self.allow_buy_checkbox.setToolTip(
@@ -354,6 +361,7 @@ class MainWindow(QMainWindow):
         strategy_layout.addWidget(QLabel("Разрешения:"), 3, 0)
         strategy_layout.addWidget(self.allow_buy_checkbox, 3, 1)
         strategy_layout.addWidget(self.allow_sell_checkbox, 3, 2)
+        strategy_layout.addWidget(self.auto_trading_enabled_checkbox, 3, 3, 1, 3)
 
         self.save_state_button = QPushButton("Сохранить настройки")
         self.save_state_button.clicked.connect(self.save_current_state)
@@ -549,6 +557,7 @@ class MainWindow(QMainWindow):
             )
 
         self.manual_mode_checkbox.setChecked(False)
+        self.auto_trading_enabled_checkbox.setChecked(False)
 
         if "allow_buy" in settings:
             self.allow_buy_checkbox.setChecked(settings["allow_buy"] == "1")
@@ -573,6 +582,7 @@ class MainWindow(QMainWindow):
             "stop_loss_percent": self.stop_loss_percent_edit.text().strip(),
             "bot_money_limit": self.bot_money_limit_edit.text().strip(),
             "manual_mode": "0",
+            "auto_trading_enabled": "1" if self.auto_trading_enabled_checkbox.isChecked() else "0",
             "allow_buy": "1" if self.allow_buy_checkbox.isChecked() else "0",
             "allow_sell": "1" if self.allow_sell_checkbox.isChecked() else "0",
             "manual_instrument_id": self.manual_instrument_id_edit.text().strip(),
@@ -612,6 +622,7 @@ class MainWindow(QMainWindow):
         self.qualified_investor_checkbox.setChecked(False)
         self.only_liquid_shares_checkbox.setChecked(True)
         self.manual_mode_checkbox.setChecked(False)
+        self.auto_trading_enabled_checkbox.setChecked(False)
 
         self.allow_buy_checkbox.setChecked(True)
         self.allow_sell_checkbox.setChecked(True)
@@ -800,6 +811,7 @@ class MainWindow(QMainWindow):
             "stop_loss_percent": stop_loss_percent,
             "bot_money_limit": bot_money_limit,
             "manual_buy_amount": manual_buy_amount,
+            "auto_trading_enabled": self.auto_trading_enabled_checkbox.isChecked(),
         }
 
     def _set_robot_inputs_locked(self, locked: bool) -> None:
@@ -819,6 +831,7 @@ class MainWindow(QMainWindow):
             self.stop_loss_percent_edit,
             self.bot_money_limit_edit,
             self.manual_mode_checkbox,
+            self.auto_trading_enabled_checkbox,
             self.allow_buy_checkbox,
             self.allow_sell_checkbox,
             self.manual_instrument_id_edit,
@@ -1064,7 +1077,12 @@ class MainWindow(QMainWindow):
 
         self._log("Проверка token/account_id через API пройдена.")
         self._log(f"Account ID подтверждён: {account.account_id} / {account.name}")
-        self._log("Робот включён. Режим: наблюдение за ростом без отправки заявок.")
+        if settings["auto_trading_enabled"]:
+            self._log(
+                "Робот включён. Режим: РЕАЛЬНАЯ АВТОТОРГОВЛЯ рыночными заявками."
+            )
+        else:
+            self._log("Робот включён. Режим: dry-run без отправки заявок.")
         self._log(f"Рабочих акций: {len(self.selected_shares_by_uid)}")
         self._log(f"Рост для покупки: {settings['growth_percent']}%")
         self._log(
@@ -1076,10 +1094,16 @@ class MainWindow(QMainWindow):
             f"Хранение снимков цен: {settings['price_snapshot_retention_days']} дней."
         )
         self._log(f"Сумма одной покупки: {settings['manual_buy_amount']} ₽")
-        self._log(
-            "Реальные торговые заявки пока не отправляются. "
-            "Создаются dry-run планы покупок."
-        )
+        if settings["auto_trading_enabled"]:
+            self._log(
+                "Реальная автоторговля включена: входы и выходы выполняются "
+                "рыночными заявками."
+            )
+        else:
+            self._log(
+                "Реальные торговые заявки не отправляются. "
+                "Создаются dry-run планы покупок."
+            )
 
         thread = QThread(self)
         worker = GrowthMonitorWorker()

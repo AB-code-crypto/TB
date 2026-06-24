@@ -23,6 +23,7 @@ from bd.buy_intent import (
 from bd.price_snapshot import cleanup_old_price_snapshots
 from bd.settings_storage import load_app_settings
 from bot.growth_scanner import GrowthScanReport, GrowthScanResult, scan_growth_once
+from bot.auto_trade_executor import execute_auto_trading_cycle
 
 
 LogCallback = Callable[[str], None]
@@ -412,14 +413,28 @@ async def run_growth_monitor_service(
                 calculated_at_utc=cycle_finished_at,
                 report=report,
             )
-            (
-                planned_buy_intents_count,
-                skipped_buy_intents_count,
-                planned_buy_intents_amount,
-            ) = save_dry_run_buy_intents(
-                new_signal_records=new_signal_records,
-                report=report,
-            )
+            settings = load_app_settings()
+            auto_trading_enabled = settings["auto_trading_enabled"] == "1"
+
+            if auto_trading_enabled:
+                trade_log_lines = await execute_auto_trading_cycle(
+                    report=report,
+                    new_signal_records=new_signal_records,
+                )
+            else:
+                (
+                    planned_buy_intents_count,
+                    skipped_buy_intents_count,
+                    planned_buy_intents_amount,
+                ) = save_dry_run_buy_intents(
+                    new_signal_records=new_signal_records,
+                    report=report,
+                )
+                trade_log_lines = build_buy_intent_log_lines(
+                    planned_count=planned_buy_intents_count,
+                    skipped_count=skipped_buy_intents_count,
+                    planned_amount=planned_buy_intents_amount,
+                )
         except Exception as error:
             cycle_finished_at = datetime.now(timezone.utc)
 
@@ -459,13 +474,7 @@ async def run_growth_monitor_service(
             duplicate_signals_count=duplicate_signals_count,
             deleted_old_price_snapshots_count=deleted_old_price_snapshots_count,
         )
-        success_log_lines.extend(
-            build_buy_intent_log_lines(
-                planned_count=planned_buy_intents_count,
-                skipped_count=skipped_buy_intents_count,
-                planned_amount=planned_buy_intents_amount,
-            )
-        )
+        success_log_lines.extend(trade_log_lines)
 
         _emit_lines(
             on_log=on_log,
