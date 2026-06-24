@@ -1570,30 +1570,14 @@ class MainWindow(QMainWindow):
 
         self.manual_trade_share = share
 
-        one_lot_last_price = last_price * Decimal(share.lot)
-        one_lot_best_ask = best_ask * Decimal(share.lot)
-        one_lot_best_bid = best_bid * Decimal(share.lot)
-
         rows = [
             ["Название", share.name],
             ["Тикер", f"{share.ticker}_{share.class_code}"],
-            ["Текущая цена", last_price],
-            ["Время цены UTC", last_price_time_utc],
             ["Best bid", best_bid],
             ["Best ask", best_ask],
             ["Акций в 1 лоте", share.lot],
-            ["Стоимость 1 лота по текущей цене", one_lot_last_price],
-            ["Стоимость 1 лота по best bid", one_lot_best_bid],
-            ["Стоимость 1 лота по best ask", one_lot_best_ask],
             ["Шаг цены", share.min_price_increment],
-            ["Свободно RUB", available_rub],
-            ["Лотов у брокера", broker_lots],
-            ["Лотов у робота", robot_lots],
-            ["Внешних лотов клиента", external_lots],
-            ["В рабочих акциях", "да" if is_working_share else "нет"],
-            ["Покупка доступна", "да" if share.buy_available_flag else "нет"],
-            ["Продажа доступна", "да" if share.sell_available_flag else "нет"],
-            ["UID", share.uid],
+            ["Свободно денег", available_rub],
         ]
 
         self._fill_table(
@@ -1605,7 +1589,7 @@ class MainWindow(QMainWindow):
         self.tabs.setCurrentWidget(self.manual_trading_tab_widget)
         self._log(
             "Данные ручной торговли обновлены: "
-            f"{share.ticker}_{share.class_code}, цена={last_price}, "
+            f"{share.ticker}_{share.class_code}, bid={best_bid}, ask={best_ask}, "
             f"лот={share.lot}."
         )
 
@@ -2408,9 +2392,9 @@ class MainWindow(QMainWindow):
         for row in range(self.orders_table.rowCount()):
             checkbox_item = self.orders_table.item(row, 0)
             order_id_item = self.orders_table.item(row, 1)
-            order_type_item = self.orders_table.item(row, 5)
-            ticker_item = self.orders_table.item(row, 6)
-            class_code_item = self.orders_table.item(row, 7)
+            order_type_item = self.orders_table.item(row, 4)
+            ticker_item = self.orders_table.item(row, 5)
+            class_code_item = self.orders_table.item(row, 6)
 
             if order_id_item is None or order_type_item is None:
                 continue
@@ -2586,7 +2570,6 @@ class MainWindow(QMainWindow):
         headers = [
             "✓",
             "order_id",
-            "request_id",
             "status",
             "direction",
             "type",
@@ -2614,11 +2597,12 @@ class MainWindow(QMainWindow):
             checkbox_item.setCheckState(Qt.CheckState.Unchecked)
             self.orders_table.setItem(row_index, 0, checkbox_item)
 
+            direction = order.direction.removeprefix("ORDER_DIRECTION_")
+
             row = [
                 order.order_id,
-                order.order_request_id,
                 order.execution_report_status,
-                order.direction,
+                direction,
                 order.order_type,
                 order.ticker,
                 order.class_code,
