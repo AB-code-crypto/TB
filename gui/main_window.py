@@ -138,7 +138,7 @@ class MainWindow(QMainWindow):
         self.async_task_error_handlers: dict[str, Callable[[str], None] | None] = {}
 
         self.setWindowTitle("TBank Robot — GUI v0.1")
-        self.resize(1230, 900)
+        self.resize(1000, 900)
 
         self.token_edit = QLineEdit(initial_token)
         self.token_edit.setEchoMode(QLineEdit.EchoMode.Password)
@@ -158,6 +158,7 @@ class MainWindow(QMainWindow):
 
         self.robot_status_label = QLabel("Робот: выключен")
         self.manual_mode_checkbox = QCheckBox("Ручной режим")
+        self.manual_mode_checkbox.setChecked(False)
 
         self.allow_buy_checkbox = QCheckBox("Покупки разрешены")
         self.allow_buy_checkbox.setChecked(True)
@@ -271,7 +272,6 @@ class MainWindow(QMainWindow):
         controls_layout.addWidget(active_orders_button, 2, 2)
         controls_layout.addWidget(self.shares_button, 2, 3)
 
-        controls_layout.addWidget(QLabel("Акции:"), 3, 0)
         controls_layout.addWidget(self.qualified_investor_checkbox, 3, 1)
         controls_layout.addWidget(self.only_liquid_shares_checkbox, 3, 2, 1, 2)
 
@@ -511,8 +511,7 @@ class MainWindow(QMainWindow):
                 settings["only_liquid_shares"] == "1"
             )
 
-        if "manual_mode" in settings:
-            self.manual_mode_checkbox.setChecked(settings["manual_mode"] == "1")
+        self.manual_mode_checkbox.setChecked(False)
 
         if "allow_buy" in settings:
             self.allow_buy_checkbox.setChecked(settings["allow_buy"] == "1")
@@ -536,7 +535,7 @@ class MainWindow(QMainWindow):
             "take_profit_percent": self.take_profit_percent_edit.text().strip(),
             "stop_loss_percent": self.stop_loss_percent_edit.text().strip(),
             "bot_money_limit": self.bot_money_limit_edit.text().strip(),
-            "manual_mode": "1" if self.manual_mode_checkbox.isChecked() else "0",
+            "manual_mode": "0",
             "allow_buy": "1" if self.allow_buy_checkbox.isChecked() else "0",
             "allow_sell": "1" if self.allow_sell_checkbox.isChecked() else "0",
             "manual_instrument_id": self.manual_instrument_id_edit.text().strip(),
@@ -1748,8 +1747,6 @@ class MainWindow(QMainWindow):
         share, order_result, order_type, quantity_lots, limit_price = result
         self.refresh_robot_orders_table()
         self.refresh_robot_positions_table()
-        self.monitoring_tabs.setCurrentWidget(self.robot_orders_table)
-        self.tabs.setCurrentWidget(self.monitoring_tabs)
 
         price_text = (
             f"limit_price={limit_price}, "
@@ -1765,6 +1762,8 @@ class MainWindow(QMainWindow):
             f"status={order_result.execution_report_status}, "
             f"исполнено лотов={order_result.lots_executed}."
         )
+        self._log("Обновляю активные позиции после ручной заявки.")
+        self.load_positions()
 
     def _get_token(self) -> str:
         token = self.token_edit.text().strip()
