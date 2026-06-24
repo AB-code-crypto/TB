@@ -200,6 +200,7 @@ class MainWindow(QMainWindow):
         self.update_robot_positions_button = QPushButton("Обновить лоты робота")
 
         self.selected_shares_table = QTableWidget()
+        self.robot_positions_tab_widget = QWidget()
         self.robot_positions_table = QTableWidget()
         self.growth_signals_table = QTableWidget()
         self.buy_intents_table = QTableWidget()
@@ -283,8 +284,7 @@ class MainWindow(QMainWindow):
         controls_layout.addWidget(self.clear_selected_shares_button, 6, 1, 1, 3)
 
         controls_layout.addWidget(QLabel("Позиции робота:"), 7, 0)
-        controls_layout.addWidget(self.sync_robot_positions_button, 7, 1, 1, 2)
-        controls_layout.addWidget(self.update_robot_positions_button, 7, 3)
+        controls_layout.addWidget(self.sync_robot_positions_button, 7, 1, 1, 3)
 
         strategy_controls = QGroupBox("Настройки стратегии и режим")
         strategy_layout = QGridLayout(strategy_controls)
@@ -387,10 +387,14 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.shares_tab_widget, "Акции")
         self.tabs.addTab(self.selected_shares_table, "Рабочие акции")
 
+        robot_positions_tab_layout = QVBoxLayout(self.robot_positions_tab_widget)
+        robot_positions_tab_layout.addWidget(self.robot_positions_table)
+        robot_positions_tab_layout.addWidget(self.update_robot_positions_button)
+
         self.monitoring_tabs.addTab(self.growth_current_table, "Текущий рост")
         self.monitoring_tabs.addTab(self.growth_signals_table, "Сигналы роста")
         self.monitoring_tabs.addTab(self.buy_intents_table, "Планы покупок")
-        self.monitoring_tabs.addTab(self.robot_positions_table, "Позиции робота")
+        self.monitoring_tabs.addTab(self.robot_positions_tab_widget, "Позиции робота")
         self.monitoring_tabs.addTab(self.growth_cycles_table, "Циклы")
         self.tabs.addTab(self.monitoring_tabs, "Мониторинг")
 
@@ -1637,7 +1641,7 @@ class MainWindow(QMainWindow):
             shares=shares,
         )
         self.refresh_robot_positions_table()
-        self.monitoring_tabs.setCurrentWidget(self.robot_positions_table)
+        self.monitoring_tabs.setCurrentWidget(self.robot_positions_tab_widget)
         self.tabs.setCurrentWidget(self.monitoring_tabs)
 
         self._log(
