@@ -1,7 +1,7 @@
 import asyncio
 from collections.abc import Callable
 from datetime import datetime, timezone
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
 from bd.growth_current_state import (
     GrowthCurrentStateInput,
@@ -27,6 +27,26 @@ from bot.growth_scanner import GrowthScanReport, GrowthScanResult, scan_growth_o
 
 LogCallback = Callable[[str], None]
 StopCallback = Callable[[], bool]
+
+
+def _parse_positive_decimal_setting(
+    settings: dict[str, str],
+    key: str,
+    label: str,
+) -> Decimal:
+    raw_value = settings[key].strip().replace(",", ".").replace(" ", "")
+
+    try:
+        value = Decimal(raw_value)
+    except InvalidOperation as error:
+        raise ValueError(
+            f"{label}: некорректное число в настройках: {settings[key]!r}"
+        ) from error
+
+    if value <= 0:
+        raise ValueError(f"{label} должен быть больше 0.")
+
+    return value
 
 
 def _get_scan_interval_seconds() -> int:
@@ -113,14 +133,16 @@ def save_dry_run_buy_intents(
     settings = load_app_settings()
 
     allow_buy = settings["allow_buy"] == "1"
-    requested_amount = Decimal(settings["manual_buy_amount"])
-    bot_money_limit = Decimal(settings["bot_money_limit"])
-
-    if requested_amount <= 0:
-        raise ValueError("manual_buy_amount должен быть больше 0.")
-
-    if bot_money_limit <= 0:
-        raise ValueError("bot_money_limit должен быть больше 0.")
+    requested_amount = _parse_positive_decimal_setting(
+        settings=settings,
+        key="manual_buy_amount",
+        label="Сумма одной покупки",
+    )
+    bot_money_limit = _parse_positive_decimal_setting(
+        settings=settings,
+        key="bot_money_limit",
+        label="Лимит денег для бота",
+    )
 
     created_at_utc = datetime.now(timezone.utc)
     remaining_bot_limit = bot_money_limit
@@ -253,12 +275,17 @@ def save_error_cycle(
     finished_at_utc: datetime,
     error: Exception,
 ) -> int:
+    error_text = str(error).strip()
+
+    if not error_text:
+        error_text = repr(error)
+
     return save_growth_scan_cycle(
         started_at_utc=started_at_utc,
         finished_at_utc=finished_at_utc,
         status=GROWTH_SCAN_CYCLE_STATUS_ERROR,
         error_type=type(error).__name__,
-        error_text=str(error),
+        error_text=error_text,
     )
 
 
@@ -409,9 +436,14 @@ async def run_growth_monitor_service(
                     f"{type(storage_error).__name__}: {storage_error}"
                 )
 
+            error_text = str(error).strip()
+
+            if not error_text:
+                error_text = repr(error)
+
             on_log(
                 f"Ошибка цикла #{error_cycle_id}: "
-                f"{type(error).__name__}: {error}"
+                f"{type(error).__name__}: {error_text}"
             )
 
             await _sleep_with_stop(

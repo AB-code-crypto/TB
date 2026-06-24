@@ -1,7 +1,7 @@
 import asyncio
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
 from grpc import aio
 from t_tech.invest import AsyncClient
@@ -67,6 +67,26 @@ class GrowthScanReport:
     skipped: list[str]
     candle_cache_hits: int
     candle_api_requests: int
+
+
+def _parse_positive_decimal_setting(
+    settings: dict[str, str],
+    key: str,
+    label: str,
+) -> Decimal:
+    raw_value = settings[key].strip().replace(",", ".").replace(" ", "")
+
+    try:
+        value = Decimal(raw_value)
+    except InvalidOperation as error:
+        raise ValueError(
+            f"{label}: некорректное число в настройках: {settings[key]!r}"
+        ) from error
+
+    if value <= 0:
+        raise ValueError(f"{label} должен быть больше 0.")
+
+    return value
 
 
 def _calculate_growth_percent(
@@ -148,7 +168,11 @@ async def scan_growth_once() -> GrowthScanReport:
     if not selected_shares:
         raise ValueError("Рабочий список акций пуст.")
 
-    growth_threshold_percent = Decimal(settings["growth_percent"])
+    growth_threshold_percent = _parse_positive_decimal_setting(
+        settings=settings,
+        key="growth_percent",
+        label="Рост для покупки",
+    )
     interval = get_growth_candle_interval(settings["growth_candle_interval"])
 
     max_price_age_seconds_raw = settings["max_price_age_seconds"]
@@ -160,9 +184,6 @@ async def scan_growth_once() -> GrowthScanReport:
 
     if max_price_age_seconds <= 0:
         raise ValueError("max_price_age_seconds должен быть больше 0.")
-
-    if growth_threshold_percent <= 0:
-        raise ValueError("Рост для покупки должен быть больше 0.")
 
     instrument_ids = [
         share.uid

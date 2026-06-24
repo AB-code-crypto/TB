@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from PySide6.QtWidgets import QHeaderView, QTableWidget, QTableWidgetItem
 
 from bd.growth_current_state import list_growth_current_states
@@ -6,18 +8,36 @@ from bd.growth_signal import list_recent_growth_signals
 from bd.buy_intent import list_recent_buy_intents
 
 
+def _format_table_value(value: object) -> str:
+    if value is None:
+        return ""
+
+    if isinstance(value, datetime):
+        return value.replace(tzinfo=None).isoformat(sep=" ", timespec="seconds")
+
+    text = str(value)
+
+    if "-" in text and ":" in text and ("T" in text or "+" in text):
+        try:
+            parsed_value = datetime.fromisoformat(text)
+        except ValueError:
+            return text
+
+        return parsed_value.replace(tzinfo=None).isoformat(
+            sep=" ",
+            timespec="seconds",
+        )
+
+    return text
+
+
 def _set_table_value(
     table: QTableWidget,
     row: int,
     column: int,
     value: object,
 ) -> None:
-    if value is None:
-        text = ""
-    else:
-        text = str(value)
-
-    table.setItem(row, column, QTableWidgetItem(text))
+    table.setItem(row, column, QTableWidgetItem(_format_table_value(value)))
 
 
 def _fit_table_columns(table: QTableWidget) -> None:

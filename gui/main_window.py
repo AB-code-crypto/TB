@@ -1355,6 +1355,31 @@ class MainWindow(QMainWindow):
 
         self.tabs.setCurrentWidget(self.info_tab_widget)
 
+    def _format_table_value(self, value: object) -> str:
+        if value is None:
+            return ""
+
+        if isinstance(value, datetime):
+            return value.replace(tzinfo=None).isoformat(
+                sep=" ",
+                timespec="seconds",
+            )
+
+        text = str(value)
+
+        if "-" in text and ":" in text and ("T" in text or "+" in text):
+            try:
+                parsed_value = datetime.fromisoformat(text)
+            except ValueError:
+                return text
+
+            return parsed_value.replace(tzinfo=None).isoformat(
+                sep=" ",
+                timespec="seconds",
+            )
+
+        return text
+
     def _fill_table(
         self,
         table: QTableWidget,
@@ -1368,7 +1393,7 @@ class MainWindow(QMainWindow):
 
         for row_index, row in enumerate(rows):
             for column_index, value in enumerate(row):
-                item = QTableWidgetItem(str(value))
+                item = QTableWidgetItem(self._format_table_value(value))
                 item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
                 table.setItem(row_index, column_index, item)
 
@@ -1376,7 +1401,7 @@ class MainWindow(QMainWindow):
         table.verticalHeader().setVisible(False)
 
     def _make_read_only_item(self, value: object) -> QTableWidgetItem:
-        item = QTableWidgetItem(str(value))
+        item = QTableWidgetItem(self._format_table_value(value))
         item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
 
         return item
