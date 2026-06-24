@@ -1,7 +1,7 @@
 import os
 from decimal import Decimal, InvalidOperation
 from collections.abc import Callable, Coroutine
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 from typing import Any
 
 from dotenv import load_dotenv
@@ -44,8 +44,6 @@ from bd.settings_storage import (
 from tbank.accounts import TBankAccount, get_accounts
 from tbank.active_orders import TBankActiveOrder, get_active_orders
 from tbank.balance import PortfolioBalance, get_balance
-from tbank.candles import TBankCandle, get_candles
-from tbank.last_prices import TBankLastPrice, get_last_prices_batched
 from tbank.positions import TBankPortfolioPosition, get_portfolio_positions
 from tbank.shares import TBankShare, get_shares
 
@@ -131,10 +129,6 @@ class MainWindow(QMainWindow):
         self.token_edit.setEchoMode(QLineEdit.EchoMode.Password)
 
         self.account_id_edit = QLineEdit(initial_account_id)
-        self.instrument_ids_edit = QLineEdit("SBER_TQBR, GAZP_TQBR, LKOH_TQBR")
-        self.candle_instrument_edit = QLineEdit("SBER_TQBR")
-        self.candle_days_edit = QLineEdit("1")
-        self.candle_limit_edit = QLineEdit("50")
 
         self.growth_percent_edit = QLineEdit("1.00")
         self.growth_candle_interval_combo = QComboBox()
@@ -172,8 +166,6 @@ class MainWindow(QMainWindow):
         self.shares_filters_label = QLabel(self._get_shares_filter_text(False))
         self.shares_filters_label.setWordWrap(True)
 
-        self.candle_interval_combo = QComboBox()
-        self.candle_interval_combo.addItems(list(CANDLE_INTERVALS.keys()))
         self._apply_saved_settings(saved_settings)
 
         self.accounts_table = QTableWidget()
@@ -187,8 +179,6 @@ class MainWindow(QMainWindow):
         )
 
         self.selected_shares_table = QTableWidget()
-        self.prices_table = QTableWidget()
-        self.candles_table = QTableWidget()
         self.growth_signals_table = QTableWidget()
         self.growth_current_table = QTableWidget()
         self.growth_cycles_table = QTableWidget()
@@ -256,38 +246,9 @@ class MainWindow(QMainWindow):
         controls_layout.addWidget(QLabel("Фильтры акций:"), 4, 0)
         controls_layout.addWidget(self.shares_filters_label, 4, 1, 1, 3)
 
-        selected_prices_button = QPushButton("Last prices по рабочим акциям")
-        selected_prices_button.clicked.connect(self.load_last_prices_for_selected_shares)
-
         self.clear_selected_shares_button = QPushButton("Очистить рабочие акции")
         self.clear_selected_shares_button.clicked.connect(self.clear_selected_shares)
 
-        controls_layout.addWidget(QLabel("Рабочие акции:"), 5, 0)
-        controls_layout.addWidget(selected_prices_button, 5, 1, 1, 2)
-        controls_layout.addWidget(self.clear_selected_shares_button, 5, 3)
-
-        controls_layout.addWidget(QLabel("Instrument IDs:"), 6, 0)
-        controls_layout.addWidget(self.instrument_ids_edit, 6, 1, 1, 2)
-
-        last_prices_button = QPushButton("Получить last prices")
-        last_prices_button.clicked.connect(self.load_last_prices)
-        controls_layout.addWidget(last_prices_button, 6, 3)
-
-        controls_layout.addWidget(QLabel("Свечи инструмент:"), 7, 0)
-        controls_layout.addWidget(self.candle_instrument_edit, 7, 1)
-
-        controls_layout.addWidget(QLabel("Интервал:"), 7, 2)
-        controls_layout.addWidget(self.candle_interval_combo, 7, 3)
-
-        controls_layout.addWidget(QLabel("Дней назад:"), 8, 0)
-        controls_layout.addWidget(self.candle_days_edit, 8, 1)
-
-        controls_layout.addWidget(QLabel("Лимит свечей:"), 8, 2)
-        controls_layout.addWidget(self.candle_limit_edit, 8, 3)
-
-        candles_button = QPushButton("Получить свечи")
-        candles_button.clicked.connect(self.load_candles)
-        controls_layout.addWidget(candles_button, 9, 0, 1, 4)
         strategy_controls = QGroupBox("Настройки стратегии и режим")
         strategy_layout = QGridLayout(strategy_controls)
 
@@ -377,8 +338,6 @@ class MainWindow(QMainWindow):
         self.monitoring_tabs.addTab(self.growth_cycles_table, "Циклы")
         self.tabs.addTab(self.monitoring_tabs, "Мониторинг")
 
-        self.tabs.addTab(self.prices_table, "Last prices")
-        self.tabs.addTab(self.candles_table, "Свечи")
         self.tabs.addTab(self.log_edit, "Лог")
 
         root_layout.addWidget(controls)
@@ -388,18 +347,6 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(root)
 
     def _apply_saved_settings(self, settings: dict[str, str]) -> None:
-        if "instrument_ids" in settings:
-            self.instrument_ids_edit.setText(settings["instrument_ids"])
-
-        if "candle_instrument" in settings:
-            self.candle_instrument_edit.setText(settings["candle_instrument"])
-
-        if "candle_days" in settings:
-            self.candle_days_edit.setText(settings["candle_days"])
-
-        if "candle_limit" in settings:
-            self.candle_limit_edit.setText(settings["candle_limit"])
-
         if "growth_percent" in settings:
             self.growth_percent_edit.setText(settings["growth_percent"])
 
@@ -456,18 +403,6 @@ class MainWindow(QMainWindow):
         if "allow_sell" in settings:
             self.allow_sell_checkbox.setChecked(settings["allow_sell"] == "1")
 
-        if "candle_interval" in settings:
-            candle_interval_index = self.candle_interval_combo.findText(
-                settings["candle_interval"]
-            )
-
-            if candle_interval_index == -1:
-                raise ValueError(
-                    f"Сохранённый интервал свечей не найден: {settings['candle_interval']}"
-                )
-
-            self.candle_interval_combo.setCurrentIndex(candle_interval_index)
-
         self.refresh_shares_filters_label()
 
     def save_current_state(self) -> None:
@@ -475,11 +410,6 @@ class MainWindow(QMainWindow):
             "token": self.token_edit.text().strip(),
             "account_id": self.account_id_edit.text().strip(),
             "client_is_qualified": "1" if self.qualified_investor_checkbox.isChecked() else "0",
-            "instrument_ids": self.instrument_ids_edit.text().strip(),
-            "candle_instrument": self.candle_instrument_edit.text().strip(),
-            "candle_days": self.candle_days_edit.text().strip(),
-            "candle_limit": self.candle_limit_edit.text().strip(),
-            "candle_interval": self.candle_interval_combo.currentText(),
             "growth_percent": self.growth_percent_edit.text().strip(),
             "growth_candle_interval": self.growth_candle_interval_combo.currentText(),
             "scan_interval_seconds": self.scan_interval_seconds_edit.text().strip(),
@@ -529,13 +459,6 @@ class MainWindow(QMainWindow):
 
         self.allow_buy_checkbox.setChecked(True)
         self.allow_sell_checkbox.setChecked(True)
-
-        self.instrument_ids_edit.setText("SBER_TQBR, GAZP_TQBR, LKOH_TQBR")
-
-        self.candle_instrument_edit.setText("SBER_TQBR")
-        self.candle_days_edit.setText("1")
-        self.candle_limit_edit.setText("50")
-        self.candle_interval_combo.setCurrentText("1 минута")
 
         self.growth_percent_edit.setText("1.00")
         self.growth_candle_interval_combo.setCurrentText("30 секунд")
@@ -1922,154 +1845,3 @@ class MainWindow(QMainWindow):
             ],
             rows,
         )
-
-    def load_last_prices_for_selected_shares(self) -> None:
-        try:
-            token = self._get_token()
-        except ValueError as error:
-            QMessageBox.warning(self, "Ошибка", str(error))
-            return
-
-        if not self.selected_shares_by_uid:
-            QMessageBox.warning(self, "Ошибка", "Рабочий список акций пуст.")
-            return
-
-        instrument_ids = [
-            share.uid
-            for share in self.selected_shares_by_uid.values()
-        ]
-
-        async def task():
-            async with AsyncClient(token) as client:
-                return await get_last_prices_batched(
-                    client=client,
-                    instrument_ids=instrument_ids,
-                    batch_size=100,
-                )
-
-        self._run_async_task(
-            "last_prices_selected_shares",
-            task,
-            self.show_last_prices,
-        )
-
-    def load_last_prices(self) -> None:
-        try:
-            token = self._get_token()
-        except ValueError as error:
-            QMessageBox.warning(self, "Ошибка", str(error))
-            return
-
-        instrument_ids = [
-            value.strip()
-            for value in self.instrument_ids_edit.text().split(",")
-            if value.strip()
-        ]
-
-        if not instrument_ids:
-            QMessageBox.warning(self, "Ошибка", "Список instrument_ids пуст.")
-            return
-
-        async def task():
-            async with AsyncClient(token) as client:
-                return await get_last_prices_batched(
-                    client=client,
-                    instrument_ids=instrument_ids,
-                    batch_size=100,
-                )
-
-        self._run_async_task("last_prices", task, self.show_last_prices)
-
-    def show_last_prices(self, prices: list[TBankLastPrice]) -> None:
-        rows = [
-            [
-                number,
-                price.ticker,
-                price.class_code,
-                price.price,
-                price.time,
-                price.instrument_uid,
-                price.last_price_type,
-            ]
-            for number, price in enumerate(prices, start=1)
-        ]
-
-        self._fill_table(
-            self.prices_table,
-            ["#", "ticker", "class_code", "price", "time_utc", "uid", "type"],
-            rows,
-        )
-
-        self._log(f"Получено last prices: {len(prices)}")
-        self.tabs.setCurrentWidget(self.prices_table)
-
-    def load_candles(self) -> None:
-        try:
-            token = self._get_token()
-        except ValueError as error:
-            QMessageBox.warning(self, "Ошибка", str(error))
-            return
-
-        instrument_id = self.candle_instrument_edit.text().strip()
-
-        if not instrument_id:
-            QMessageBox.warning(self, "Ошибка", "instrument_id не может быть пустым.")
-            return
-
-        try:
-            days = int(self.candle_days_edit.text().strip())
-            limit = int(self.candle_limit_edit.text().strip())
-        except ValueError:
-            QMessageBox.warning(self, "Ошибка", "Дни и лимит должны быть числами.")
-            return
-
-        if days <= 0:
-            QMessageBox.warning(self, "Ошибка", "Количество дней должно быть больше 0.")
-            return
-
-        if limit <= 0:
-            QMessageBox.warning(self, "Ошибка", "Лимит должен быть больше 0.")
-            return
-
-        interval_name = self.candle_interval_combo.currentText()
-        interval = CANDLE_INTERVALS[interval_name]
-
-        to_time = datetime.now(timezone.utc)
-        from_time = to_time - timedelta(days=days)
-
-        async def task():
-            async with AsyncClient(token) as client:
-                return await get_candles(
-                    client=client,
-                    instrument_id=instrument_id,
-                    from_time=from_time,
-                    to_time=to_time,
-                    interval=interval,
-                    limit=limit,
-                )
-
-        self._run_async_task("candles", task, self.show_candles)
-
-    def show_candles(self, candles: list[TBankCandle]) -> None:
-        rows = [
-            [
-                number,
-                candle.time,
-                candle.open,
-                candle.high,
-                candle.low,
-                candle.close,
-                candle.volume,
-                candle.is_complete,
-            ]
-            for number, candle in enumerate(candles, start=1)
-        ]
-
-        self._fill_table(
-            self.candles_table,
-            ["#", "time_utc", "open", "high", "low", "close", "volume", "complete"],
-            rows,
-        )
-
-        self._log(f"Получено свечей: {len(candles)}")
-        self.tabs.setCurrentWidget(self.candles_table)
