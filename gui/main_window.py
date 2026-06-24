@@ -243,18 +243,15 @@ class MainWindow(QMainWindow):
 
         self.accounts_button = QPushButton("Получить аккаунты")
         balance_button = QPushButton("Получить баланс")
-        positions_button = QPushButton("Получить позиции")
         active_orders_button = QPushButton("Активные заявки")
 
         self.accounts_button.clicked.connect(self.load_accounts)
         balance_button.clicked.connect(self.load_balance)
-        positions_button.clicked.connect(self.load_positions)
         active_orders_button.clicked.connect(self.load_active_orders)
 
         controls_layout.addWidget(self.accounts_button, 2, 0)
         controls_layout.addWidget(balance_button, 2, 1)
-        controls_layout.addWidget(positions_button, 2, 2)
-        controls_layout.addWidget(active_orders_button, 2, 3)
+        controls_layout.addWidget(active_orders_button, 2, 2)
 
         controls_layout.addWidget(QLabel("Акции:"), 3, 0)
         controls_layout.addWidget(self.qualified_investor_checkbox, 3, 1, 1, 2)
