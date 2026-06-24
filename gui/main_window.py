@@ -164,7 +164,13 @@ class MainWindow(QMainWindow):
         self.qualified_investor_checkbox = QCheckBox("Я квалифицированный инвестор")
         self.qualified_investor_checkbox.setChecked(False)
 
-        self.shares_filters_label = QLabel(self._get_shares_filter_text(False))
+        self.only_liquid_shares_checkbox = QCheckBox("Только ликвидные акции")
+        self.only_liquid_shares_checkbox.setChecked(True)
+        self.only_liquid_shares_checkbox.setToolTip(
+            "Если включено — в рабочий список попадут только акции с liquidity_flag=True."
+        )
+
+        self.shares_filters_label = QLabel(self._get_shares_filter_text(False, True))
         self.shares_filters_label.setWordWrap(True)
 
         self._apply_saved_settings(saved_settings)
@@ -246,18 +252,23 @@ class MainWindow(QMainWindow):
         self.shares_button.clicked.connect(self.load_shares)
         controls_layout.addWidget(self.shares_button, 3, 3)
 
+        controls_layout.addWidget(self.only_liquid_shares_checkbox, 4, 1, 1, 3)
+
         self.qualified_investor_checkbox.toggled.connect(
-            lambda checked: self.refresh_shares_filters_label()
+            lambda checked: self.refresh_shares_after_filter_change()
+        )
+        self.only_liquid_shares_checkbox.toggled.connect(
+            lambda checked: self.refresh_shares_after_filter_change()
         )
 
-        controls_layout.addWidget(QLabel("Фильтры акций:"), 4, 0)
-        controls_layout.addWidget(self.shares_filters_label, 4, 1, 1, 3)
+        controls_layout.addWidget(QLabel("Фильтры акций:"), 5, 0)
+        controls_layout.addWidget(self.shares_filters_label, 5, 1, 1, 3)
 
         self.clear_selected_shares_button = QPushButton("Очистить рабочие акции")
         self.clear_selected_shares_button.clicked.connect(self.clear_selected_shares)
 
-        controls_layout.addWidget(QLabel("Рабочие акции:"), 5, 0)
-        controls_layout.addWidget(self.clear_selected_shares_button, 5, 1, 1, 3)
+        controls_layout.addWidget(QLabel("Рабочие акции:"), 6, 0)
+        controls_layout.addWidget(self.clear_selected_shares_button, 6, 1, 1, 3)
 
         strategy_controls = QGroupBox("Настройки стратегии и режим")
         strategy_layout = QGridLayout(strategy_controls)
@@ -419,6 +430,11 @@ class MainWindow(QMainWindow):
                 settings["client_is_qualified"] == "1"
             )
 
+        if "only_liquid_shares" in settings:
+            self.only_liquid_shares_checkbox.setChecked(
+                settings["only_liquid_shares"] == "1"
+            )
+
         if "manual_mode" in settings:
             self.manual_mode_checkbox.setChecked(settings["manual_mode"] == "1")
 
@@ -435,6 +451,7 @@ class MainWindow(QMainWindow):
             "token": self.token_edit.text().strip(),
             "account_id": self.account_id_edit.text().strip(),
             "client_is_qualified": "1" if self.qualified_investor_checkbox.isChecked() else "0",
+            "only_liquid_shares": "1" if self.only_liquid_shares_checkbox.isChecked() else "0",
             "growth_percent": self.growth_percent_edit.text().strip(),
             "growth_candle_interval": self.growth_candle_interval_combo.currentText(),
             "scan_interval_seconds": self.scan_interval_seconds_edit.text().strip(),
@@ -480,6 +497,7 @@ class MainWindow(QMainWindow):
         self.account_id_edit.clear()
 
         self.qualified_investor_checkbox.setChecked(False)
+        self.only_liquid_shares_checkbox.setChecked(True)
         self.manual_mode_checkbox.setChecked(False)
 
         self.allow_buy_checkbox.setChecked(True)
@@ -514,11 +532,20 @@ class MainWindow(QMainWindow):
         self._log("Покупки разрешены: да")
         self._log("Продажи разрешены: да")
 
-    def _get_shares_filter_text(self, client_is_qualified: bool) -> str:
+    def _get_shares_filter_text(
+        self,
+        client_is_qualified: bool,
+        only_liquid_shares: bool,
+    ) -> str:
         qual_filter = (
             "for_qual_investor: допускаются"
             if client_is_qualified
             else "for_qual_investor=False"
+        )
+        liquidity_filter = (
+            "liquidity=True"
+            if only_liquid_shares
+            else "liquidity_flag — не фильтр, только колонка"
         )
 
         return (
@@ -530,12 +557,34 @@ class MainWindow(QMainWindow):
             "sell=True; "
             "blocked_tca=False; "
             f"{qual_filter}; "
-            "liquidity_flag — не фильтр, только колонка."
+            f"{liquidity_filter}."
         )
 
     def refresh_shares_filters_label(self) -> None:
         self.shares_filters_label.setText(
-            self._get_shares_filter_text(self.qualified_investor_checkbox.isChecked())
+            self._get_shares_filter_text(
+                self.qualified_investor_checkbox.isChecked(),
+                self.only_liquid_shares_checkbox.isChecked(),
+            )
+        )
+
+    def refresh_shares_after_filter_change(self) -> None:
+        self.refresh_shares_filters_label()
+
+        if not self.all_shares:
+            return
+
+        self.available_shares = self._filter_available_shares(
+            shares=self.all_shares,
+            client_is_qualified=self.qualified_investor_checkbox.isChecked(),
+            only_liquid_shares=self.only_liquid_shares_checkbox.isChecked(),
+        )
+
+        self.refresh_available_shares_table()
+        self._sync_selected_shares_with_available()
+
+        self._log(
+            f"Рабочих акций после изменения фильтров: {len(self.available_shares)}"
         )
 
     def _parse_decimal_field(self, line_edit: QLineEdit, field_name: str) -> Decimal:
@@ -646,6 +695,7 @@ class MainWindow(QMainWindow):
             self.token_edit,
             self.account_id_edit,
             self.qualified_investor_checkbox,
+            self.only_liquid_shares_checkbox,
             self.growth_percent_edit,
             self.growth_candle_interval_combo,
             self.scan_interval_seconds_edit,
@@ -719,6 +769,7 @@ class MainWindow(QMainWindow):
             return
 
         client_is_qualified = self.qualified_investor_checkbox.isChecked()
+        only_liquid_shares = self.only_liquid_shares_checkbox.isChecked()
 
         self._set_robot_inputs_locked(True)
         self._set_robot_visual_state("starting")
@@ -746,6 +797,7 @@ class MainWindow(QMainWindow):
                 account_id=account_id,
                 settings=settings,
                 client_is_qualified=client_is_qualified,
+                only_liquid_shares=only_liquid_shares,
             )
 
         self._run_async_task(
@@ -761,6 +813,7 @@ class MainWindow(QMainWindow):
         account_id: str,
         settings: dict[str, object],
         client_is_qualified: bool,
+        only_liquid_shares: bool,
     ) -> None:
         accounts, shares = result
 
@@ -791,6 +844,7 @@ class MainWindow(QMainWindow):
         available_shares = self._filter_available_shares(
             shares=shares,
             client_is_qualified=client_is_qualified,
+            only_liquid_shares=only_liquid_shares,
         )
         available_shares_by_uid = {
             share.uid: share
@@ -1622,6 +1676,7 @@ class MainWindow(QMainWindow):
             return
 
         client_is_qualified = self.qualified_investor_checkbox.isChecked()
+        only_liquid_shares = self.only_liquid_shares_checkbox.isChecked()
         self.refresh_shares_filters_label()
 
         async def task():
@@ -1631,9 +1686,10 @@ class MainWindow(QMainWindow):
         self._run_async_task(
             "shares",
             task,
-            lambda shares, qualified=client_is_qualified: self.show_shares(
+            lambda shares, qualified=client_is_qualified, liquid=only_liquid_shares: self.show_shares(
                 shares,
                 qualified,
+                liquid,
             ),
         )
 
@@ -1641,6 +1697,7 @@ class MainWindow(QMainWindow):
         self,
         shares: list[TBankShare],
         client_is_qualified: bool,
+        only_liquid_shares: bool,
     ) -> list[TBankShare]:
         filtered_shares: list[TBankShare] = []
 
@@ -1667,6 +1724,9 @@ class MainWindow(QMainWindow):
                 continue
 
             if share.for_qual_investor_flag and not client_is_qualified:
+                continue
+
+            if only_liquid_shares and not share.liquidity_flag:
                 continue
 
             filtered_shares.append(share)
@@ -1699,11 +1759,13 @@ class MainWindow(QMainWindow):
         self,
         shares: list[TBankShare],
         client_is_qualified: bool,
+        only_liquid_shares: bool,
     ) -> None:
         self.all_shares = shares
         self.available_shares = self._filter_available_shares(
             shares=shares,
             client_is_qualified=client_is_qualified,
+            only_liquid_shares=only_liquid_shares,
         )
 
         self.refresh_available_shares_table()
@@ -1711,7 +1773,11 @@ class MainWindow(QMainWindow):
         qualified_count = sum(1 for share in shares if share.for_qual_investor_flag)
 
         self._log(f"Клиент квал: {'да' if client_is_qualified else 'нет'}")
-        self._log(f"Фильтры акций: {self._get_shares_filter_text(client_is_qualified)}")
+        self._log(f"Только ликвидные акции: {'да' if only_liquid_shares else 'нет'}")
+        self._log(
+            "Фильтры акций: "
+            f"{self._get_shares_filter_text(client_is_qualified, only_liquid_shares)}"
+        )
         self._log(f"Всего акций из API: {len(shares)}")
         self._log(f"Акций с признаком для квалов в общем списке: {qualified_count}")
         self._log(f"Рабочих акций после фильтра: {len(self.available_shares)}")
