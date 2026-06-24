@@ -78,6 +78,11 @@ GROWTH_CANDLE_INTERVALS: dict[str, int] = {
 
 
 
+class CheckableTableWidgetItem(QTableWidgetItem):
+    def __lt__(self, other) -> bool:
+        return self.checkState().value < other.checkState().value
+
+
 class MainWindow(QMainWindow):
     async_task_finished = Signal(str, object)
     async_task_failed = Signal(str, str)
@@ -1867,7 +1872,7 @@ class MainWindow(QMainWindow):
         self.shares_table.setHorizontalHeaderLabels(headers)
 
         for row_index, share in enumerate(self.available_shares):
-            checkbox_item = QTableWidgetItem()
+            checkbox_item = CheckableTableWidgetItem()
             checkbox_item.setFlags(
                 Qt.ItemFlag.ItemIsEnabled
                 | Qt.ItemFlag.ItemIsUserCheckable
@@ -1910,6 +1915,7 @@ class MainWindow(QMainWindow):
             QHeaderView.ResizeMode.ResizeToContents
         )
         self.shares_table.verticalHeader().setVisible(False)
+        self.shares_table.setColumnHidden(1, True)   # номер строки больше не нужен в GUI
         self.shares_table.setColumnHidden(8, True)   # uid: внутренний идентификатор инструмента
         self.shares_table.setColumnHidden(15, True)  # required_tests: внутренний список тестов API
         self.shares_table.setSortingEnabled(True)
