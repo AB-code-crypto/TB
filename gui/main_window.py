@@ -173,6 +173,7 @@ class MainWindow(QMainWindow):
         self.positions_table = QTableWidget()
         self.orders_table = QTableWidget()
         self.info_tab_widget = QWidget()
+        self.info_title_label = QLabel("")
         self.shares_table = QTableWidget()
         self.shares_tab_widget = QWidget()
         self.apply_checked_shares_button = QPushButton(
@@ -330,26 +331,14 @@ class MainWindow(QMainWindow):
         shares_tab_layout.addWidget(self.apply_checked_shares_button)
 
         info_layout = QVBoxLayout(self.info_tab_widget)
-
-        accounts_group = QGroupBox("Аккаунты")
-        accounts_layout = QVBoxLayout(accounts_group)
-        accounts_layout.addWidget(self.accounts_table)
-        info_layout.addWidget(accounts_group)
-
-        balance_group = QGroupBox("Баланс")
-        balance_layout = QVBoxLayout(balance_group)
-        balance_layout.addWidget(self.money_table)
-        info_layout.addWidget(balance_group)
-
-        positions_group = QGroupBox("Позиции")
-        positions_layout = QVBoxLayout(positions_group)
-        positions_layout.addWidget(self.positions_table)
-        info_layout.addWidget(positions_group)
-
-        orders_group = QGroupBox("Активные заявки")
-        orders_layout = QVBoxLayout(orders_group)
-        orders_layout.addWidget(self.orders_table)
-        info_layout.addWidget(orders_group)
+        self.info_title_label.setStyleSheet("font-weight: bold;")
+        self.info_title_label.setVisible(False)
+        info_layout.addWidget(self.info_title_label)
+        info_layout.addWidget(self.accounts_table)
+        info_layout.addWidget(self.money_table)
+        info_layout.addWidget(self.positions_table)
+        info_layout.addWidget(self.orders_table)
+        self._hide_info_tables()
 
         self.tabs = QTabWidget()
         self.tabs.addTab(self.info_tab_widget, "Инфо")
@@ -1321,6 +1310,31 @@ class MainWindow(QMainWindow):
         now = datetime.now().strftime("%H:%M:%S")
         self.log_edit.appendPlainText(f"[{now}] {message}")
 
+    def _hide_info_tables(self) -> None:
+        self.info_title_label.setVisible(False)
+
+        for table in (
+            self.accounts_table,
+            self.money_table,
+            self.positions_table,
+            self.orders_table,
+        ):
+            table.setVisible(False)
+
+    def _show_info_table(self, title: str, table: QTableWidget) -> None:
+        self.info_title_label.setText(title)
+        self.info_title_label.setVisible(True)
+
+        for current_table in (
+            self.accounts_table,
+            self.money_table,
+            self.positions_table,
+            self.orders_table,
+        ):
+            current_table.setVisible(current_table is table)
+
+        self.tabs.setCurrentWidget(self.info_tab_widget)
+
     def _fill_table(
         self,
         table: QTableWidget,
@@ -1400,7 +1414,7 @@ class MainWindow(QMainWindow):
             self._log(f"Account ID выбран автоматически: {accounts[0].account_id}")
 
         self._log(f"Получено аккаунтов: {len(accounts)}")
-        self.tabs.setCurrentWidget(self.info_tab_widget)
+        self._show_info_table("Аккаунты", self.accounts_table)
 
     def load_balance(self) -> None:
         try:
@@ -1439,7 +1453,7 @@ class MainWindow(QMainWindow):
             rows,
         )
 
-        self.tabs.setCurrentWidget(self.info_tab_widget)
+        self._show_info_table("Баланс", self.money_table)
 
     def load_positions(self) -> None:
         try:
@@ -1490,7 +1504,7 @@ class MainWindow(QMainWindow):
         )
 
         self._log(f"Получено позиций: {len(positions)}")
-        self.tabs.setCurrentWidget(self.info_tab_widget)
+        self._show_info_table("Позиции", self.positions_table)
 
     def load_active_orders(self) -> None:
         try:
@@ -1545,7 +1559,7 @@ class MainWindow(QMainWindow):
         )
 
         self._log(f"Получено активных заявок: {len(orders)}")
-        self.tabs.setCurrentWidget(self.info_tab_widget)
+        self._show_info_table("Активные заявки", self.orders_table)
 
     def load_shares(self) -> None:
         if self.robot_is_running:
