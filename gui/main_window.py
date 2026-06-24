@@ -390,7 +390,7 @@ class MainWindow(QMainWindow):
         manual_trading_controls_layout.addWidget(QLabel("Объём продажи, лоты:"), 2, 2)
         manual_trading_controls_layout.addWidget(self.manual_sell_lots_edit, 2, 3)
 
-        manual_trading_controls_layout.addWidget(QLabel("Отступ лимитной заявки, п.:"), 3, 0)
+        manual_trading_controls_layout.addWidget(QLabel("Отступ лимитной заявки, шагов:"), 3, 0)
         manual_trading_controls_layout.addWidget(self.manual_limit_offset_edit, 3, 1)
 
         manual_trading_controls_layout.addWidget(self.manual_market_buy_button, 4, 0)
@@ -1409,15 +1409,15 @@ class MainWindow(QMainWindow):
         return Decimal("0")
 
     def _parse_manual_limit_offset(self) -> Decimal:
-        offset = self._parse_decimal_field(
+        offset_steps = self._parse_decimal_field(
             self.manual_limit_offset_edit,
-            "Отступ лимитной заявки",
+            "Отступ лимитной заявки, шагов цены",
         )
 
-        if offset < 0:
+        if offset_steps < 0:
             raise ValueError("Отступ лимитной заявки не может быть меньше 0.")
 
-        return offset
+        return offset_steps
 
     def _round_price_to_increment(
         self,
@@ -1441,10 +1441,12 @@ class MainWindow(QMainWindow):
         offset: Decimal,
         share: TBankShare,
     ) -> Decimal:
+        offset_price = offset * share.min_price_increment
+
         if side == "BUY":
-            raw_price = best_ask - offset
+            raw_price = best_ask - offset_price
         elif side == "SELL":
-            raw_price = best_bid + offset
+            raw_price = best_bid + offset_price
         else:
             raise ValueError(f"Неизвестная сторона заявки: {side}")
 
@@ -1833,7 +1835,7 @@ class MainWindow(QMainWindow):
                 f"{type_text.capitalize()} заявка на {side_text}\n\n"
                 f"{share.name} ({share.ticker}_{share.class_code})\n"
                 f"{size_text}\n"
-                f"Отступ от best price: {limit_offset}"
+                f"Отступ от best price: {limit_offset} шаг(ов) цены"
             )
         else:
             confirm_text = (
