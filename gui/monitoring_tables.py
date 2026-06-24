@@ -3,6 +3,7 @@ from PySide6.QtWidgets import QHeaderView, QTableWidget, QTableWidgetItem
 from bd.growth_current_state import list_growth_current_states
 from bd.growth_scan_cycle import list_recent_growth_scan_cycles
 from bd.growth_signal import list_recent_growth_signals
+from bd.buy_intent import list_recent_buy_intents
 
 
 def _set_table_value(
@@ -96,6 +97,47 @@ def fill_growth_signals_table(table: QTableWidget) -> None:
         _set_table_value(table, row_index, 7, signal.current_price)
         _set_table_value(table, row_index, 8, signal.candle_open_price)
         _set_table_value(table, row_index, 9, signal.status)
+
+    _fit_table_columns(table)
+
+
+def fill_buy_intents_table(table: QTableWidget) -> None:
+    intents = list_recent_buy_intents(limit=100)
+
+    headers = [
+        "ID",
+        "UTC",
+        "Инструмент",
+        "Статус",
+        "Причина",
+        "Цена",
+        "Рост",
+        "Сумма покупки",
+        "Лот",
+        "Лотов",
+        "Акций",
+        "Плановая сумма",
+        "Сигнал",
+    ]
+
+    table.setColumnCount(len(headers))
+    table.setHorizontalHeaderLabels(headers)
+    table.setRowCount(len(intents))
+
+    for row_index, intent in enumerate(intents):
+        _set_table_value(table, row_index, 0, intent.id)
+        _set_table_value(table, row_index, 1, intent.created_at_utc)
+        _set_table_value(table, row_index, 2, f"{intent.ticker}_{intent.class_code}")
+        _set_table_value(table, row_index, 3, intent.status)
+        _set_table_value(table, row_index, 4, intent.reason)
+        _set_table_value(table, row_index, 5, intent.current_price)
+        _set_table_value(table, row_index, 6, f"{intent.growth_percent:.4f}%")
+        _set_table_value(table, row_index, 7, intent.requested_amount)
+        _set_table_value(table, row_index, 8, intent.lot)
+        _set_table_value(table, row_index, 9, intent.quantity_lots)
+        _set_table_value(table, row_index, 10, intent.quantity_shares)
+        _set_table_value(table, row_index, 11, intent.estimated_order_amount)
+        _set_table_value(table, row_index, 12, intent.growth_signal_id)
 
     _fit_table_columns(table)
 

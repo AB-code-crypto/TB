@@ -30,6 +30,7 @@ from t_tech.invest.grpc import marketdata_pb2
 from gui.worker import AsyncTaskWorker
 from gui.growth_monitor_worker import GrowthMonitorWorker
 from gui.monitoring_tables import (
+    fill_buy_intents_table,
     fill_growth_current_table,
     fill_growth_cycles_table,
     fill_growth_signals_table,
@@ -185,6 +186,7 @@ class MainWindow(QMainWindow):
 
         self.selected_shares_table = QTableWidget()
         self.growth_signals_table = QTableWidget()
+        self.buy_intents_table = QTableWidget()
         self.growth_current_table = QTableWidget()
         self.growth_cycles_table = QTableWidget()
         self.monitoring_tabs = QTabWidget()
@@ -357,6 +359,7 @@ class MainWindow(QMainWindow):
 
         self.monitoring_tabs.addTab(self.growth_current_table, "Текущий рост")
         self.monitoring_tabs.addTab(self.growth_signals_table, "Сигналы роста")
+        self.monitoring_tabs.addTab(self.buy_intents_table, "Планы покупок")
         self.monitoring_tabs.addTab(self.growth_cycles_table, "Циклы")
         self.tabs.addTab(self.monitoring_tabs, "Мониторинг")
 
@@ -878,7 +881,10 @@ class MainWindow(QMainWindow):
             f"Хранение снимков цен: {settings['price_snapshot_retention_days']} дней."
         )
         self._log(f"Сумма одной покупки: {settings['manual_buy_amount']} ₽")
-        self._log("Торговые заявки пока не отправляются.")
+        self._log(
+            "Реальные торговые заявки пока не отправляются. "
+            "Создаются dry-run планы покупок."
+        )
 
         thread = QThread(self)
         worker = GrowthMonitorWorker()
@@ -927,6 +933,7 @@ class MainWindow(QMainWindow):
     def refresh_growth_monitor_tables(self) -> None:
         self.refresh_growth_current_table()
         self.refresh_growth_signals_table()
+        self.refresh_buy_intents_table()
         self.refresh_growth_cycles_table()
 
     def refresh_growth_current_table(self) -> None:
@@ -934,6 +941,9 @@ class MainWindow(QMainWindow):
 
     def refresh_growth_signals_table(self) -> None:
         fill_growth_signals_table(self.growth_signals_table)
+
+    def refresh_buy_intents_table(self) -> None:
+        fill_buy_intents_table(self.buy_intents_table)
 
     def refresh_growth_cycles_table(self) -> None:
         fill_growth_cycles_table(self.growth_cycles_table)

@@ -1,6 +1,7 @@
 import asyncio
 from collections.abc import Callable
 from datetime import datetime, timezone
+from decimal import Decimal
 
 from bd.growth_current_state import (
     GrowthCurrentStateInput,
@@ -13,9 +14,15 @@ from bd.growth_scan_cycle import (
     save_growth_scan_cycle,
 )
 from bd.growth_signal import count_growth_signals, save_growth_signal
+from bd.buy_intent import (
+    BUY_INTENT_SIDE_BUY,
+    BUY_INTENT_STATUS_PLANNED,
+    BUY_INTENT_STATUS_SKIPPED,
+    save_buy_intent,
+)
 from bd.price_snapshot import cleanup_old_price_snapshots
 from bd.settings_storage import load_app_settings
-from bot.growth_scanner import GrowthScanReport, scan_growth_once
+from bot.growth_scanner import GrowthScanReport, GrowthScanResult, scan_growth_once
 
 
 LogCallback = Callable[[str], None]
@@ -61,11 +68,14 @@ def _emit_lines(on_log: LogCallback, lines: list[str]) -> None:
         on_log(line)
 
 
-def save_report_signals(report: GrowthScanReport) -> tuple[int, int]:
+def save_report_signals(
+    report: GrowthScanReport,
+) -> tuple[int, int, list[tuple[int, GrowthScanResult]]]:
     detected_at_utc = datetime.now(timezone.utc)
 
     new_signals_count = 0
     duplicate_signals_count = 0
+    new_signal_records: list[tuple[int, GrowthScanResult]] = []
 
     for signal in report.signals:
         signal_id = save_growth_signal(
@@ -88,8 +98,128 @@ def save_report_signals(report: GrowthScanReport) -> tuple[int, int]:
             duplicate_signals_count += 1
         else:
             new_signals_count += 1
+            new_signal_records.append((signal_id, signal))
 
-    return new_signals_count, duplicate_signals_count
+    return new_signals_count, duplicate_signals_count, new_signal_records
+
+
+def save_dry_run_buy_intents(
+    new_signal_records: list[tuple[int, GrowthScanResult]],
+    report: GrowthScanReport,
+) -> tuple[int, int, Decimal]:
+    if not new_signal_records:
+        return 0, 0, Decimal("0")
+
+    settings = load_app_settings()
+
+    allow_buy = settings["allow_buy"] == "1"
+    requested_amount = Decimal(settings["manual_buy_amount"])
+    bot_money_limit = Decimal(settings["bot_money_limit"])
+
+    if requested_amount <= 0:
+        raise ValueError("manual_buy_amount должен быть больше 0.")
+
+    if bot_money_limit <= 0:
+        raise ValueError("bot_money_limit должен быть больше 0.")
+
+    created_at_utc = datetime.now(timezone.utc)
+    remaining_bot_limit = bot_money_limit
+
+    planned_count = 0
+    skipped_count = 0
+    planned_amount = Decimal("0")
+
+    for signal_id, signal in new_signal_records:
+        status = BUY_INTENT_STATUS_SKIPPED
+        reason = ""
+        quantity_lots = 0
+        quantity_shares = 0
+        estimated_order_amount = Decimal("0")
+
+        if not allow_buy:
+            reason = "Покупки запрещены настройкой allow_buy."
+        elif signal.currency != "RUB":
+            reason = f"Валюта инструмента не RUB: {signal.currency}."
+        else:
+            one_lot_amount = signal.current_price * Decimal(signal.lot)
+
+            if one_lot_amount <= 0:
+                reason = "Стоимость одного лота должна быть больше 0."
+            else:
+                quantity_lots = int(requested_amount // one_lot_amount)
+
+                if quantity_lots <= 0:
+                    reason = (
+                        "Сумма одной покупки меньше стоимости одного лота: "
+                        f"amount={requested_amount}, one_lot={one_lot_amount}."
+                    )
+                else:
+                    quantity_shares = quantity_lots * signal.lot
+                    estimated_order_amount = signal.current_price * Decimal(quantity_shares)
+
+                    if estimated_order_amount > remaining_bot_limit:
+                        reason = (
+                            "Недостаточно лимита денег бота в текущем цикле: "
+                            f"need={estimated_order_amount}, remaining={remaining_bot_limit}."
+                        )
+                    else:
+                        status = BUY_INTENT_STATUS_PLANNED
+                        reason = "Dry-run: покупка рассчитана, заявка брокеру не отправлена."
+
+        intent_id = save_buy_intent(
+            created_at_utc=created_at_utc,
+            growth_signal_id=signal_id,
+            instrument_uid=signal.instrument_uid,
+            ticker=signal.ticker,
+            class_code=signal.class_code,
+            name=signal.name,
+            side=BUY_INTENT_SIDE_BUY,
+            status=status,
+            reason=reason,
+            current_price=signal.current_price,
+            growth_percent=signal.growth_percent,
+            threshold_percent=report.growth_threshold_percent,
+            requested_amount=requested_amount,
+            lot=signal.lot,
+            quantity_lots=quantity_lots,
+            quantity_shares=quantity_shares,
+            estimated_order_amount=estimated_order_amount,
+            currency=signal.currency,
+            is_dry_run=True,
+        )
+
+        if intent_id is None:
+            continue
+
+        if status == BUY_INTENT_STATUS_PLANNED:
+            planned_count += 1
+            planned_amount += estimated_order_amount
+            remaining_bot_limit -= estimated_order_amount
+        elif status == BUY_INTENT_STATUS_SKIPPED:
+            skipped_count += 1
+        else:
+            raise RuntimeError(f"Неизвестный статус buy_intent: {status}")
+
+    return planned_count, skipped_count, planned_amount
+
+
+def build_buy_intent_log_lines(
+    planned_count: int,
+    skipped_count: int,
+    planned_amount: Decimal,
+) -> list[str]:
+    if planned_count == 0 and skipped_count == 0:
+        return []
+
+    return [
+        (
+            "Dry-run покупок: "
+            f"планов={planned_count}, "
+            f"пропущено={skipped_count}, "
+            f"плановая сумма={planned_amount:.2f} ₽."
+        ),
+        "Реальные заявки брокеру не отправлялись.",
+    ]
 
 
 def save_success_cycle(
@@ -235,7 +365,7 @@ async def run_growth_monitor_service(
             price_snapshot_retention_days = _get_price_snapshot_retention_days()
 
             report = await scan_growth_once()
-            new_signals_count, duplicate_signals_count = save_report_signals(report)
+            new_signals_count, duplicate_signals_count, new_signal_records = save_report_signals(report)
 
             deleted_old_price_snapshots_count = cleanup_old_price_snapshots(
                 retention_days=price_snapshot_retention_days,
@@ -253,6 +383,14 @@ async def run_growth_monitor_service(
             current_growth_rows_saved = save_current_growth_state(
                 scan_cycle_id=scan_cycle_id,
                 calculated_at_utc=cycle_finished_at,
+                report=report,
+            )
+            (
+                planned_buy_intents_count,
+                skipped_buy_intents_count,
+                planned_buy_intents_amount,
+            ) = save_dry_run_buy_intents(
+                new_signal_records=new_signal_records,
                 report=report,
             )
         except Exception as error:
@@ -282,15 +420,24 @@ async def run_growth_monitor_service(
             )
             continue
 
+        success_log_lines = build_success_log_lines(
+            scan_cycle_id=scan_cycle_id,
+            report=report,
+            new_signals_count=new_signals_count,
+            duplicate_signals_count=duplicate_signals_count,
+            deleted_old_price_snapshots_count=deleted_old_price_snapshots_count,
+        )
+        success_log_lines.extend(
+            build_buy_intent_log_lines(
+                planned_count=planned_buy_intents_count,
+                skipped_count=skipped_buy_intents_count,
+                planned_amount=planned_buy_intents_amount,
+            )
+        )
+
         _emit_lines(
             on_log=on_log,
-            lines=build_success_log_lines(
-                scan_cycle_id=scan_cycle_id,
-                report=report,
-                new_signals_count=new_signals_count,
-                duplicate_signals_count=duplicate_signals_count,
-                deleted_old_price_snapshots_count=deleted_old_price_snapshots_count,
-            ),
+            lines=success_log_lines,
         )
 
         elapsed_seconds = (cycle_finished_at - cycle_started_at).total_seconds()

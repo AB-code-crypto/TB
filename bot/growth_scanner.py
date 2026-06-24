@@ -43,6 +43,8 @@ class GrowthScanResult:
     class_code: str
     instrument_uid: str
     name: str
+    lot: int
+    currency: str
     current_price: Decimal
     candle_open_price: Decimal
     growth_percent: Decimal
@@ -245,6 +247,8 @@ async def scan_growth_once() -> GrowthScanReport:
                     class_code=share.class_code,
                     instrument_uid=share.uid,
                     name=share.name,
+                    lot=share.lot,
+                    currency=share.currency,
                     current_price=last_price.price,
                     candle_open_price=base_candle.open_price,
                     growth_percent=growth_percent,
