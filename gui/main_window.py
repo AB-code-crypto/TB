@@ -161,7 +161,7 @@ class MainWindow(QMainWindow):
         self.manual_buy_amount_edit = QLineEdit("10000.00")
         self.manual_sell_lots_edit = QLineEdit("1")
 
-        self.qualified_investor_checkbox = QCheckBox("Клиент — квалифицированный инвестор")
+        self.qualified_investor_checkbox = QCheckBox("Я квалифицированный инвестор")
         self.qualified_investor_checkbox.setChecked(False)
 
         self.shares_filters_label = QLabel(self._get_shares_filter_text(False))
@@ -1824,6 +1824,8 @@ class MainWindow(QMainWindow):
             QHeaderView.ResizeMode.ResizeToContents
         )
         self.shares_table.verticalHeader().setVisible(False)
+        self.shares_table.setColumnHidden(8, True)   # uid: внутренний идентификатор инструмента
+        self.shares_table.setColumnHidden(15, True)  # required_tests: внутренний список тестов API
         self.shares_table.setSortingEnabled(True)
         self.shares_table.sortItems(2, Qt.SortOrder.AscendingOrder)
         self.apply_shares_search_filter()
@@ -1965,3 +1967,4 @@ class MainWindow(QMainWindow):
             ],
             rows,
         )
+        self.selected_shares_table.setColumnHidden(7, True)  # uid: нужен коду, но не нужен клиенту
