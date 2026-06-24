@@ -115,6 +115,8 @@ class MainWindow(QMainWindow):
         self.workers: list[AsyncTaskWorker] = []
         self.growth_monitor_thread: QThread | None = None
         self.growth_monitor_worker: GrowthMonitorWorker | None = None
+        self.pending_robot_start_settings: dict[str, object] | None = None
+        self.pending_robot_start_account: TBankAccount | None = None
 
         self.all_shares: list[TBankShare] = []
         self.available_shares: list[TBankShare] = []
@@ -196,8 +198,9 @@ class MainWindow(QMainWindow):
         self.apply_checked_shares_button = QPushButton(
             "Обновить рабочие акции из отмеченных"
         )
-        self.sync_robot_positions_button = QPushButton("Синхронизировать позиции робота")
-        self.update_robot_positions_button = QPushButton("Обновить лоты робота")
+        self.update_robot_positions_button = QPushButton(
+            "Обновить позиции и запустить робота"
+        )
 
         self.selected_shares_table = QTableWidget()
         self.robot_positions_tab_widget = QWidget()
@@ -274,14 +277,10 @@ class MainWindow(QMainWindow):
 
         self.clear_selected_shares_button = QPushButton("Очистить рабочие акции")
         self.clear_selected_shares_button.clicked.connect(self.clear_selected_shares)
-        self.sync_robot_positions_button.clicked.connect(self.sync_robot_positions)
         self.update_robot_positions_button.clicked.connect(self.update_robot_positions_from_table)
 
         controls_layout.addWidget(QLabel("Рабочие акции:"), 6, 0)
         controls_layout.addWidget(self.clear_selected_shares_button, 6, 1, 1, 3)
-
-        controls_layout.addWidget(QLabel("Позиции робота:"), 7, 0)
-        controls_layout.addWidget(self.sync_robot_positions_button, 7, 1, 1, 3)
 
         strategy_controls = QGroupBox("Настройки стратегии и режим")
         strategy_layout = QGridLayout(strategy_controls)
@@ -307,7 +306,7 @@ class MainWindow(QMainWindow):
         strategy_layout.addWidget(QLabel("Лимит денег для бота, ₽:"), 1, 2)
         strategy_layout.addWidget(self.bot_money_limit_edit, 1, 3)
 
-        self.robot_toggle_button = QPushButton("Включить робота")
+        self.robot_toggle_button = QPushButton("Включить и синхронизировать")
         self.robot_toggle_button.setCheckable(True)
         self.robot_toggle_button.toggled.connect(self.toggle_robot_monitoring)
         self._set_robot_visual_state("stopped")
@@ -735,8 +734,6 @@ class MainWindow(QMainWindow):
             self.shares_button,
             self.apply_checked_shares_button,
             self.clear_selected_shares_button,
-            self.sync_robot_positions_button,
-            self.update_robot_positions_button,
             self.save_state_button,
             self.reset_state_button,
             self.manual_buy_button,
@@ -761,6 +758,8 @@ class MainWindow(QMainWindow):
         self.robot_is_running = False
         self._set_robot_inputs_locked(False)
         self._set_robot_visual_state("stopped")
+        self.pending_robot_start_settings = None
+        self.pending_robot_start_account = None
         self._log(f"Робот не включён: {clean_message}")
         QMessageBox.warning(self, "Робот не включён", clean_message)
 
@@ -798,6 +797,7 @@ class MainWindow(QMainWindow):
         self._set_robot_visual_state("starting")
         self._log("Проверяю token/account_id через T-Invest API.")
         self._log("Проверяю рабочие акции через T-Invest API.")
+        self._log("Синхронизирую позиции робота с брокером.")
 
         async def task():
             async with AsyncClient(token) as client:
@@ -920,17 +920,21 @@ class MainWindow(QMainWindow):
             broker_positions=broker_positions,
             shares=shares,
         )
+        self.pending_robot_start_settings = settings
+        self.pending_robot_start_account = account
         self.refresh_robot_positions_table()
+        self.monitoring_tabs.setCurrentWidget(self.robot_positions_tab_widget)
+        self.tabs.setCurrentWidget(self.monitoring_tabs)
+        self._set_robot_visual_state("positions_review")
         self._log(
-            "Позиции робота синхронизированы перед стартом: "
+            "Позиции робота синхронизированы перед запуском: "
             f"проверено={sync_report.checked_count}, "
             f"уменьшено={sync_report.reduced_count}, "
             f"обнулено={sync_report.zeroed_count}."
         )
-
-        self._start_robot_after_validation(
-            settings=settings,
-            account=account,
+        self._log(
+            "Проверьте колонку 'Лотов у робота' и нажмите "
+            "'Обновить позиции и запустить робота'."
         )
 
 
@@ -953,6 +957,9 @@ class MainWindow(QMainWindow):
         account: TBankAccount,
     ) -> None:
         self.save_current_state()
+
+        self.pending_robot_start_settings = None
+        self.pending_robot_start_account = None
 
         self.robot_is_running = True
         self._set_robot_inputs_locked(True)
@@ -1002,6 +1009,8 @@ class MainWindow(QMainWindow):
     def stop_robot_placeholder(self) -> None:
         if self.growth_monitor_worker is None:
             self.robot_is_running = False
+            self.pending_robot_start_settings = None
+            self.pending_robot_start_account = None
             self._set_robot_inputs_locked(False)
             self._set_robot_visual_state("stopped")
             self._log("Мониторинг не был запущен.")
@@ -1045,12 +1054,16 @@ class MainWindow(QMainWindow):
 
     def _on_growth_monitor_finished(self) -> None:
         self.robot_is_running = False
+        self.pending_robot_start_settings = None
+        self.pending_robot_start_account = None
         self._set_robot_inputs_locked(False)
         self._set_robot_visual_state("stopped")
         self._log("Мониторинг остановлен.")
 
     def _on_growth_monitor_failed(self, error_text: str) -> None:
         self.robot_is_running = False
+        self.pending_robot_start_settings = None
+        self.pending_robot_start_account = None
         self._set_robot_inputs_locked(False)
         self._set_robot_visual_state("error")
         self._log(f"Ошибка мониторинга: {error_text}")
@@ -1067,17 +1080,20 @@ class MainWindow(QMainWindow):
 
         self.robot_toggle_button.blockSignals(True)
 
+        if hasattr(self, "update_robot_positions_button"):
+            self.update_robot_positions_button.setEnabled(False)
+
         if state == "starting":
             self.robot_is_running = False
-            self.robot_status_label.setText("Робот: проверка запуска")
+            self.robot_status_label.setText("Робот: синхронизация позиций")
             self.robot_status_label.setStyleSheet(
                 "font-weight: bold; color: #8a5a00;"
             )
             self.robot_toggle_button.setChecked(True)
             self.robot_toggle_button.setEnabled(False)
-            self.robot_toggle_button.setText("Проверка запуска...")
+            self.robot_toggle_button.setText("Синхронизация позиций...")
             self.robot_toggle_button.setToolTip(
-                "Проверяем token, account_id, рабочие акции и настройки."
+                "Проверяем token, account_id, рабочие акции и синхронизируем позиции."
             )
             self.robot_toggle_button.setStyleSheet(
                 """
@@ -1091,6 +1107,34 @@ class MainWindow(QMainWindow):
                 }
                 """
             )
+
+        elif state == "positions_review":
+            self.robot_is_running = False
+            self.robot_status_label.setText("Робот: проверьте позиции")
+            self.robot_status_label.setStyleSheet(
+                "font-weight: bold; color: #8a5a00;"
+            )
+            self.robot_toggle_button.setChecked(False)
+            self.robot_toggle_button.setEnabled(False)
+            self.robot_toggle_button.setText("Позиции синхронизированы")
+            self.robot_toggle_button.setToolTip(
+                "Проверьте позиции робота и нажмите 'Обновить позиции и запустить робота'."
+            )
+            self.robot_toggle_button.setStyleSheet(
+                """
+                QPushButton {
+                    background-color: #fff0b3;
+                    color: #6b4a00;
+                    font-weight: bold;
+                    border: 1px solid #d6b656;
+                    border-radius: 5px;
+                    padding: 6px 12px;
+                }
+                """
+            )
+
+            if hasattr(self, "update_robot_positions_button"):
+                self.update_robot_positions_button.setEnabled(True)
 
         elif state == "running":
             self.robot_is_running = True
@@ -1149,9 +1193,9 @@ class MainWindow(QMainWindow):
             )
             self.robot_toggle_button.setChecked(False)
             self.robot_toggle_button.setEnabled(True)
-            self.robot_toggle_button.setText("Ошибка. Включить робота")
+            self.robot_toggle_button.setText("Ошибка. Включить и синхронизировать")
             self.robot_toggle_button.setToolTip(
-                "Робот остановлен из-за ошибки. Нажмите, чтобы включить снова."
+                "Робот остановлен из-за ошибки. Нажмите, чтобы повторить синхронизацию и запуск."
             )
             self.robot_toggle_button.setStyleSheet(
                 """
@@ -1177,9 +1221,9 @@ class MainWindow(QMainWindow):
             )
             self.robot_toggle_button.setChecked(False)
             self.robot_toggle_button.setEnabled(True)
-            self.robot_toggle_button.setText("Включить робота")
+            self.robot_toggle_button.setText("Включить и синхронизировать")
             self.robot_toggle_button.setToolTip(
-                "Робот выключен. Нажмите, чтобы включить."
+                "Робот выключен. Нажмите, чтобы синхронизировать позиции перед запуском."
             )
             self.robot_toggle_button.setStyleSheet(
                 """
@@ -1593,6 +1637,27 @@ class MainWindow(QMainWindow):
 
         self.refresh_robot_positions_table()
         self._log(f"Лоты робота обновлены из таблицы. Изменено строк: {changed_count}")
+
+        if (
+            self.pending_robot_start_settings is None
+            or self.pending_robot_start_account is None
+        ):
+            QMessageBox.warning(
+                self,
+                "Запуск не подготовлен",
+                "Сначала нажмите 'Включить и синхронизировать'.",
+            )
+            return
+
+        settings = self.pending_robot_start_settings
+        account = self.pending_robot_start_account
+        self.pending_robot_start_settings = None
+        self.pending_robot_start_account = None
+
+        self._start_robot_after_validation(
+            settings=settings,
+            account=account,
+        )
 
     def sync_robot_positions(self) -> None:
         if self.robot_is_running:
