@@ -18,7 +18,12 @@ class AsyncTaskWorker(QObject):
         try:
             result = asyncio.run(self.task_factory())
         except Exception as error:
-            self.failed.emit(f"{type(error).__name__}: {error}")
+            error_message = str(error).strip()
+
+            if not error_message:
+                error_message = repr(error)
+
+            self.failed.emit(f"{type(error).__name__}: {error_message}")
             return
 
         self.finished.emit(result)

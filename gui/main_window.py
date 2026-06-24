@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from dotenv import load_dotenv
-from PySide6.QtCore import Qt, QThread
+from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -80,6 +80,9 @@ GROWTH_CANDLE_INTERVALS: dict[str, int] = {
 
 
 class MainWindow(QMainWindow):
+    async_task_finished = Signal(str, object)
+    async_task_failed = Signal(str, str)
+
     def __init__(self) -> None:
         super().__init__()
 
@@ -115,6 +118,11 @@ class MainWindow(QMainWindow):
             for share in saved_selected_shares
         }
         self.robot_is_running = False
+
+        self.async_task_counter = 0
+        self.async_task_names: dict[str, str] = {}
+        self.async_task_success_handlers: dict[str, Callable[[Any], None]] = {}
+        self.async_task_error_handlers: dict[str, Callable[[str], None] | None] = {}
 
         self.setWindowTitle("TBank Robot — GUI v0.1")
         self.resize(1450, 900)
@@ -188,6 +196,9 @@ class MainWindow(QMainWindow):
 
         self.log_edit = QPlainTextEdit()
         self.log_edit.setReadOnly(True)
+
+        self.async_task_finished.connect(self._handle_async_task_finished)
+        self.async_task_failed.connect(self._handle_async_task_failed)
 
         self._build_ui()
         self.refresh_selected_shares_table()
@@ -716,12 +727,21 @@ class MainWindow(QMainWindow):
         for widget in widgets:
             widget.setEnabled(enabled)
 
+
     def _reject_robot_start(self, message: str) -> None:
+        clean_message = message.strip()
+
+        if not clean_message:
+            clean_message = (
+                "Запуск робота отклонён, но текст ошибки пуст. "
+                "Проверь лог приложения и консольный вывод."
+            )
+
         self.robot_is_running = False
         self._set_robot_inputs_locked(False)
         self._set_robot_visual_state("stopped")
-        self._log(f"Робот не включён: {message}")
-        QMessageBox.warning(self, "Робот не включён", message)
+        self._log(f"Робот не включён: {clean_message}")
+        QMessageBox.warning(self, "Робот не включён", clean_message)
 
     def _get_robot_start_form(self) -> tuple[str, str, dict[str, object]]:
         token = self._get_token()
@@ -760,6 +780,14 @@ class MainWindow(QMainWindow):
         async def task():
             async with AsyncClient(token) as client:
                 accounts = await get_accounts(client)
+                account_exists = any(
+                    account.account_id == account_id
+                    for account in accounts
+                )
+
+                if not account_exists:
+                    return accounts, []
+
                 shares = await get_shares(client)
 
                 return accounts, shares
@@ -866,10 +894,18 @@ class MainWindow(QMainWindow):
             account=account,
         )
 
+
     def _handle_robot_start_validation_error(self, error_text: str) -> None:
+        clean_error_text = error_text.strip()
+
+        if not clean_error_text:
+            clean_error_text = (
+                "T-Invest API или нижний сетевой слой вернул пустой текст ошибки."
+            )
+
         self._reject_robot_start(
             "Проверка token/account_id через T-Invest API не пройдена.\n\n"
-            f"{error_text}"
+            f"{clean_error_text}"
         )
 
     def _start_robot_after_validation(
@@ -1229,6 +1265,7 @@ class MainWindow(QMainWindow):
 
         return account_id
 
+
     def _run_async_task(
         self,
         name: str,
@@ -1237,6 +1274,13 @@ class MainWindow(QMainWindow):
         on_error: Callable[[str], None] | None = None,
     ) -> None:
         self._log(f"Старт задачи: {name}")
+
+        self.async_task_counter += 1
+        task_id = f"{name}:{self.async_task_counter}"
+
+        self.async_task_names[task_id] = name
+        self.async_task_success_handlers[task_id] = on_success
+        self.async_task_error_handlers[task_id] = on_error
 
         thread = QThread(self)
         worker = AsyncTaskWorker(task_factory)
@@ -1249,17 +1293,15 @@ class MainWindow(QMainWindow):
         thread.started.connect(worker.run)
 
         worker.finished.connect(
-            lambda result, task_name=name, success_handler=on_success: self._handle_success(
-                task_name,
+            lambda result, current_task_id=task_id: self.async_task_finished.emit(
+                current_task_id,
                 result,
-                success_handler,
             )
         )
         worker.failed.connect(
-            lambda error, task_name=name, error_handler=on_error: self._handle_error(
-                task_name,
+            lambda error, current_task_id=task_id: self.async_task_failed.emit(
+                current_task_id,
                 error,
-                error_handler,
             )
         )
 
@@ -1276,6 +1318,28 @@ class MainWindow(QMainWindow):
         )
 
         thread.start()
+
+    def _handle_async_task_finished(self, task_id: str, result: object) -> None:
+        name = self.async_task_names.pop(task_id)
+        on_success = self.async_task_success_handlers.pop(task_id)
+        self.async_task_error_handlers.pop(task_id, None)
+
+        self._handle_success(
+            name=name,
+            result=result,
+            on_success=on_success,
+        )
+
+    def _handle_async_task_failed(self, task_id: str, error: str) -> None:
+        name = self.async_task_names.pop(task_id)
+        self.async_task_success_handlers.pop(task_id, None)
+        on_error = self.async_task_error_handlers.pop(task_id, None)
+
+        self._handle_error(
+            name=name,
+            error=error,
+            on_error=on_error,
+        )
 
     def _cleanup_task(self, thread: QThread, worker: AsyncTaskWorker) -> None:
         if thread in self.threads:
