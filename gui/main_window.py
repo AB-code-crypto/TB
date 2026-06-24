@@ -352,6 +352,9 @@ class MainWindow(QMainWindow):
         self.shares_search_edit.textChanged.connect(
             lambda text: self.apply_shares_search_filter()
         )
+        self.shares_table.itemChanged.connect(
+            lambda item: self.apply_shares_search_filter()
+        )
 
         info_layout = QVBoxLayout(self.info_tab_widget)
         self.info_title_label.setStyleSheet("font-weight: bold;")
@@ -1786,10 +1789,25 @@ class MainWindow(QMainWindow):
 
         self.tabs.setCurrentWidget(self.shares_tab_widget)
 
+    def _count_checked_available_shares(self) -> int:
+        checked_count = 0
+
+        for row in range(self.shares_table.rowCount()):
+            checkbox_item = self.shares_table.item(row, 0)
+
+            if checkbox_item is None:
+                continue
+
+            if checkbox_item.checkState() == Qt.CheckState.Checked:
+                checked_count += 1
+
+        return checked_count
+
     def apply_shares_search_filter(self) -> None:
         query = self.shares_search_edit.text().strip().casefold()
         visible_count = 0
         total_count = self.shares_table.rowCount()
+        checked_count = self._count_checked_available_shares()
 
         for row in range(total_count):
             searchable_values = []
@@ -1812,11 +1830,13 @@ class MainWindow(QMainWindow):
             self.shares_search_status_label.setText("")
         elif query:
             self.shares_search_status_label.setText(
-                f"Найдено: {visible_count} из {total_count}"
+                f"Найдено: {visible_count} из {total_count}; "
+                f"отмечено: {checked_count}"
             )
         else:
             self.shares_search_status_label.setText(
-                f"Всего доступных акций: {total_count}"
+                f"Всего доступных акций: {total_count}; "
+                f"отмечено: {checked_count}"
             )
 
     def refresh_available_shares_table(self) -> None:
