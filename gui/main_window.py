@@ -34,7 +34,9 @@ from gui.monitoring_tables import (
     fill_growth_current_table,
     fill_growth_cycles_table,
     fill_growth_signals_table,
+    fill_robot_positions_table,
 )
+from bd.robot_position import sync_robot_positions_with_broker
 from bd.settings_storage import (
     load_app_settings,
     load_selected_shares,
@@ -194,8 +196,10 @@ class MainWindow(QMainWindow):
         self.apply_checked_shares_button = QPushButton(
             "Обновить рабочие акции из отмеченных"
         )
+        self.sync_robot_positions_button = QPushButton("Синхронизировать позиции робота")
 
         self.selected_shares_table = QTableWidget()
+        self.robot_positions_table = QTableWidget()
         self.growth_signals_table = QTableWidget()
         self.buy_intents_table = QTableWidget()
         self.growth_current_table = QTableWidget()
@@ -271,9 +275,13 @@ class MainWindow(QMainWindow):
 
         self.clear_selected_shares_button = QPushButton("Очистить рабочие акции")
         self.clear_selected_shares_button.clicked.connect(self.clear_selected_shares)
+        self.sync_robot_positions_button.clicked.connect(self.sync_robot_positions)
 
         controls_layout.addWidget(QLabel("Рабочие акции:"), 6, 0)
         controls_layout.addWidget(self.clear_selected_shares_button, 6, 1, 1, 3)
+
+        controls_layout.addWidget(QLabel("Позиции робота:"), 7, 0)
+        controls_layout.addWidget(self.sync_robot_positions_button, 7, 1, 1, 3)
 
         strategy_controls = QGroupBox("Настройки стратегии и режим")
         strategy_layout = QGridLayout(strategy_controls)
@@ -379,6 +387,7 @@ class MainWindow(QMainWindow):
         self.monitoring_tabs.addTab(self.growth_current_table, "Текущий рост")
         self.monitoring_tabs.addTab(self.growth_signals_table, "Сигналы роста")
         self.monitoring_tabs.addTab(self.buy_intents_table, "Планы покупок")
+        self.monitoring_tabs.addTab(self.robot_positions_table, "Позиции робота")
         self.monitoring_tabs.addTab(self.growth_cycles_table, "Циклы")
         self.tabs.addTab(self.monitoring_tabs, "Мониторинг")
 
@@ -722,6 +731,7 @@ class MainWindow(QMainWindow):
             self.shares_button,
             self.apply_checked_shares_button,
             self.clear_selected_shares_button,
+            self.sync_robot_positions_button,
             self.save_state_button,
             self.reset_state_button,
             self.manual_buy_button,
@@ -793,13 +803,14 @@ class MainWindow(QMainWindow):
                 )
 
                 if not account_exists:
-                    return accounts, []
+                    return accounts, [], []
 
                 shares = await get_shares(client)
+                positions = await get_portfolio_positions(client, account_id)
 
-                return accounts, shares
+                return accounts, shares, positions
 
-        def on_success(result: tuple[list[TBankAccount], list[TBankShare]]) -> None:
+        def on_success(result: tuple[list[TBankAccount], list[TBankShare], list[TBankPortfolioPosition]]) -> None:
             self._handle_robot_start_validation_success(
                 result=result,
                 account_id=account_id,
@@ -817,13 +828,13 @@ class MainWindow(QMainWindow):
 
     def _handle_robot_start_validation_success(
         self,
-        result: tuple[list[TBankAccount], list[TBankShare]],
+        result: tuple[list[TBankAccount], list[TBankShare], list[TBankPortfolioPosition]],
         account_id: str,
         settings: dict[str, object],
         client_is_qualified: bool,
         only_liquid_shares: bool,
     ) -> None:
-        accounts, shares = result
+        accounts, shares, broker_positions = result
 
         account = next(
             (
@@ -898,6 +909,18 @@ class MainWindow(QMainWindow):
 
         self.refresh_available_shares_table()
         self.refresh_selected_shares_table()
+
+        sync_report = sync_robot_positions_with_broker(
+            account_id=account_id,
+            broker_positions=broker_positions,
+        )
+        self.refresh_robot_positions_table()
+        self._log(
+            "Позиции робота синхронизированы перед стартом: "
+            f"проверено={sync_report.checked_count}, "
+            f"уменьшено={sync_report.reduced_count}, "
+            f"обнулено={sync_report.zeroed_count}."
+        )
 
         self._start_robot_after_validation(
             settings=settings,
@@ -996,6 +1019,7 @@ class MainWindow(QMainWindow):
         self.refresh_growth_current_table()
         self.refresh_growth_signals_table()
         self.refresh_buy_intents_table()
+        self.refresh_robot_positions_table()
         self.refresh_growth_cycles_table()
 
     def refresh_growth_current_table(self) -> None:
@@ -1006,6 +1030,9 @@ class MainWindow(QMainWindow):
 
     def refresh_buy_intents_table(self) -> None:
         fill_buy_intents_table(self.buy_intents_table)
+
+    def refresh_robot_positions_table(self) -> None:
+        fill_robot_positions_table(self.robot_positions_table)
 
     def refresh_growth_cycles_table(self) -> None:
         fill_growth_cycles_table(self.growth_cycles_table)
@@ -1484,6 +1511,55 @@ class MainWindow(QMainWindow):
 
         self.account_id_edit.setText(account_id_item.text())
         self._log(f"Account ID выбран из таблицы: {account_id_item.text()}")
+
+    def sync_robot_positions(self) -> None:
+        if self.robot_is_running:
+            QMessageBox.warning(
+                self,
+                "Робот включён",
+                "Позиции робота нельзя синхронизировать во время работы робота.",
+            )
+            return
+
+        try:
+            token = self._get_token()
+            account_id = self._get_account_id()
+        except ValueError as error:
+            QMessageBox.warning(self, "Ошибка", str(error))
+            return
+
+        async def task():
+            async with AsyncClient(token) as client:
+                return await get_portfolio_positions(client, account_id)
+
+        self._run_async_task(
+            "robot_position_sync",
+            task,
+            lambda positions, current_account_id=account_id: self.show_robot_position_sync(
+                current_account_id,
+                positions,
+            ),
+        )
+
+    def show_robot_position_sync(
+        self,
+        account_id: str,
+        positions: list[TBankPortfolioPosition],
+    ) -> None:
+        sync_report = sync_robot_positions_with_broker(
+            account_id=account_id,
+            broker_positions=positions,
+        )
+        self.refresh_robot_positions_table()
+        self.monitoring_tabs.setCurrentWidget(self.robot_positions_table)
+        self.tabs.setCurrentWidget(self.monitoring_tabs)
+
+        self._log(
+            "Позиции робота синхронизированы: "
+            f"проверено={sync_report.checked_count}, "
+            f"уменьшено={sync_report.reduced_count}, "
+            f"обнулено={sync_report.zeroed_count}."
+        )
 
     def load_accounts(self) -> None:
         try:
