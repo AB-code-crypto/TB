@@ -441,6 +441,103 @@ def set_robot_position_lots(
     return True
 
 
+def get_robot_position(
+    account_id: str,
+    instrument_uid: str,
+) -> RobotPosition | None:
+    init_robot_position_storage()
+
+    with get_connection() as connection:
+        row = connection.execute(
+            """
+            SELECT *
+            FROM robot_position
+            WHERE account_id = ?
+              AND instrument_uid = ?
+            LIMIT 1
+            """,
+            (
+                account_id,
+                instrument_uid,
+            ),
+        ).fetchone()
+
+    if row is None:
+        return None
+
+    return _position_row_to_dataclass(row)
+
+
+def apply_robot_order_fill(
+    account_id: str,
+    share: TBankShare,
+    side: str,
+    executed_lots: int,
+    executed_price: Decimal,
+) -> None:
+    if executed_lots <= 0:
+        return
+
+    current_position = get_robot_position(
+        account_id=account_id,
+        instrument_uid=share.uid,
+    )
+
+    if side == "BUY":
+        if current_position is None or current_position.robot_lots <= 0:
+            new_robot_lots = executed_lots
+            new_avg_price = executed_price
+        else:
+            old_robot_lots = current_position.robot_lots
+            new_robot_lots = old_robot_lots + executed_lots
+            old_amount = current_position.avg_price * Decimal(old_robot_lots)
+            new_amount = executed_price * Decimal(executed_lots)
+            new_avg_price = (old_amount + new_amount) / Decimal(new_robot_lots)
+
+        update_robot_position_after_fill(
+            account_id=account_id,
+            instrument_uid=share.uid,
+            ticker=share.ticker,
+            class_code=share.class_code,
+            name=share.name,
+            lot=share.lot,
+            robot_lots=new_robot_lots,
+            avg_price=new_avg_price,
+        )
+        return
+
+    if side == "SELL":
+        if current_position is None:
+            raise ValueError("Позиция робота для продажи не найдена.")
+
+        if executed_lots > current_position.robot_lots:
+            raise ValueError(
+                "Исполнено больше лотов, чем было в позиции робота: "
+                f"executed_lots={executed_lots}, robot_lots={current_position.robot_lots}"
+            )
+
+        new_robot_lots = current_position.robot_lots - executed_lots
+        new_avg_price = (
+            current_position.avg_price
+            if new_robot_lots > 0
+            else Decimal("0")
+        )
+
+        update_robot_position_after_fill(
+            account_id=account_id,
+            instrument_uid=share.uid,
+            ticker=share.ticker,
+            class_code=share.class_code,
+            name=share.name,
+            lot=share.lot,
+            robot_lots=new_robot_lots,
+            avg_price=new_avg_price,
+        )
+        return
+
+    raise ValueError(f"Неизвестная сторона заявки: {side}")
+
+
 def sync_robot_positions_with_broker(
     account_id: str,
     broker_positions: list[TBankPortfolioPosition],

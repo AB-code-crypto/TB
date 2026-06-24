@@ -1,4 +1,5 @@
 import os
+from uuid import uuid4
 from decimal import Decimal, InvalidOperation
 from collections.abc import Callable, Coroutine
 from datetime import datetime
@@ -34,9 +35,11 @@ from gui.monitoring_tables import (
     fill_growth_current_table,
     fill_growth_cycles_table,
     fill_growth_signals_table,
+    fill_robot_orders_table,
     fill_robot_positions_table,
 )
-from bd.robot_position import set_robot_position_lots, sync_robot_positions_with_broker
+from bd.robot_order import create_robot_order, mark_robot_order_failed, mark_robot_order_sent
+from bd.robot_position import apply_robot_order_fill, get_robot_position, set_robot_position_lots, sync_robot_positions_with_broker
 from bd.settings_storage import (
     load_app_settings,
     load_selected_shares,
@@ -207,6 +210,7 @@ class MainWindow(QMainWindow):
         self.robot_positions_table = QTableWidget()
         self.growth_signals_table = QTableWidget()
         self.buy_intents_table = QTableWidget()
+        self.robot_orders_table = QTableWidget()
         self.growth_current_table = QTableWidget()
         self.growth_cycles_table = QTableWidget()
         self.monitoring_tabs = QTabWidget()
@@ -390,6 +394,7 @@ class MainWindow(QMainWindow):
         self.monitoring_tabs.addTab(self.growth_current_table, "Текущий рост")
         self.monitoring_tabs.addTab(self.growth_signals_table, "Сигналы роста")
         self.monitoring_tabs.addTab(self.buy_intents_table, "Планы покупок")
+        self.monitoring_tabs.addTab(self.robot_orders_table, "Заявки робота")
         self.monitoring_tabs.addTab(self.robot_positions_tab_widget, "Позиции робота")
         self.monitoring_tabs.addTab(self.growth_cycles_table, "Циклы")
         self.tabs.addTab(self.monitoring_tabs, "Мониторинг")
@@ -1034,6 +1039,7 @@ class MainWindow(QMainWindow):
         self.refresh_growth_current_table()
         self.refresh_growth_signals_table()
         self.refresh_buy_intents_table()
+        self.refresh_robot_orders_table()
         self.refresh_robot_positions_table()
         self.refresh_growth_cycles_table()
 
@@ -1045,6 +1051,9 @@ class MainWindow(QMainWindow):
 
     def refresh_buy_intents_table(self) -> None:
         fill_buy_intents_table(self.buy_intents_table)
+
+    def refresh_robot_orders_table(self) -> None:
+        fill_robot_orders_table(self.robot_orders_table)
 
     def refresh_robot_positions_table(self) -> None:
         fill_robot_positions_table(self.robot_positions_table)

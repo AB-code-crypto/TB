@@ -7,6 +7,7 @@ from bd.growth_current_state import list_growth_current_states
 from bd.growth_scan_cycle import list_recent_growth_scan_cycles
 from bd.growth_signal import list_recent_growth_signals
 from bd.buy_intent import list_recent_buy_intents
+from bd.robot_order import list_recent_robot_orders
 from bd.robot_position import list_robot_positions
 
 
@@ -60,6 +61,53 @@ def _fit_table_columns(table: QTableWidget) -> None:
         QHeaderView.ResizeMode.ResizeToContents
     )
     table.verticalHeader().setVisible(False)
+
+
+def fill_robot_orders_table(table: QTableWidget) -> None:
+    orders = list_recent_robot_orders(limit=100)
+
+    headers = [
+        "ID",
+        "UTC",
+        "Сторона",
+        "Статус",
+        "Статус брокера",
+        "Тип",
+        "Инструмент",
+        "Название",
+        "Лотов",
+        "Лимитная цена",
+        "Исполнено",
+        "Цена исполнения",
+        "Сумма",
+        "order_request_id",
+        "broker_order_id",
+        "Ошибка",
+    ]
+
+    table.setColumnCount(len(headers))
+    table.setHorizontalHeaderLabels(headers)
+    table.setRowCount(len(orders))
+
+    for row_index, order in enumerate(orders):
+        _set_table_value(table, row_index, 0, order.id)
+        _set_table_value(table, row_index, 1, order.created_at_utc)
+        _set_table_value(table, row_index, 2, order.side)
+        _set_table_value(table, row_index, 3, order.status)
+        _set_table_value(table, row_index, 4, order.execution_report_status)
+        _set_table_value(table, row_index, 5, order.order_type)
+        _set_table_value(table, row_index, 6, f"{order.ticker}_{order.class_code}")
+        _set_table_value(table, row_index, 7, order.name)
+        _set_table_value(table, row_index, 8, order.quantity_lots)
+        _set_table_value(table, row_index, 9, order.limit_price)
+        _set_table_value(table, row_index, 10, order.lots_executed)
+        _set_table_value(table, row_index, 11, order.executed_order_price)
+        _set_table_value(table, row_index, 12, order.total_order_amount)
+        _set_table_value(table, row_index, 13, order.order_request_id)
+        _set_table_value(table, row_index, 14, order.broker_order_id)
+        _set_table_value(table, row_index, 15, order.error_text)
+
+    _fit_table_columns(table)
 
 
 def fill_robot_positions_table(table: QTableWidget) -> None:
