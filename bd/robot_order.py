@@ -11,6 +11,7 @@ ROBOT_ORDER_SIDE_SELL = "SELL"
 ROBOT_ORDER_STATUS_PREPARED = "PREPARED"
 ROBOT_ORDER_STATUS_SENT = "SENT"
 ROBOT_ORDER_STATUS_FAILED = "FAILED"
+ROBOT_ORDER_STATUS_CANCELLED = "CANCELLED"
 
 
 @dataclass(frozen=True)
@@ -271,6 +272,36 @@ def mark_robot_order_failed(
         )
 
 
+
+
+def mark_robot_order_cancelled_by_broker_order(
+    broker_order_id: str,
+) -> bool:
+    init_robot_order_storage()
+
+    if not broker_order_id.strip():
+        raise ValueError("broker_order_id не может быть пустым.")
+
+    now_utc = datetime.now(timezone.utc)
+
+    with get_connection() as connection:
+        cursor = connection.execute(
+            """
+            UPDATE robot_order
+            SET updated_at_utc = ?,
+                status = ?,
+                execution_report_status = ?
+            WHERE broker_order_id = ?
+            """,
+            (
+                _datetime_to_storage_text(now_utc),
+                ROBOT_ORDER_STATUS_CANCELLED,
+                "CANCELLED_BY_USER",
+                broker_order_id,
+            ),
+        )
+
+        return cursor.rowcount > 0
 def list_recent_robot_orders(limit: int = 100) -> list[RobotOrder]:
     init_robot_order_storage()
 

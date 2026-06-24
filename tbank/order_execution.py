@@ -220,3 +220,29 @@ async def post_market_order(
         quantity_lots=quantity_lots,
         limit_price=None,
     )
+
+
+async def cancel_order(
+    client: OrdersApiClient,
+    account_id: str,
+    broker_order_id: str,
+) -> None:
+    if not account_id.strip():
+        raise ValueError("account_id не может быть пустым.")
+
+    if not broker_order_id.strip():
+        raise ValueError("broker_order_id не может быть пустым.")
+
+    request = orders_pb2.CancelOrderRequest()
+    fields = request.DESCRIPTOR.fields_by_name
+
+    if "account_id" in fields:
+        request.account_id = account_id
+
+    if "order_id" in fields:
+        request.order_id = broker_order_id
+
+    await client.orders.stub.CancelOrder(
+        request=request,
+        metadata=client.orders.metadata,
+    )

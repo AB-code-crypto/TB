@@ -38,7 +38,7 @@ from gui.monitoring_tables import (
     fill_robot_orders_table,
     fill_robot_positions_table,
 )
-from bd.robot_order import create_robot_order, mark_robot_order_failed, mark_robot_order_sent
+from bd.robot_order import create_robot_order, mark_robot_order_cancelled_by_broker_order, mark_robot_order_failed, mark_robot_order_sent
 from bd.robot_position import apply_robot_order_fill, get_robot_position, set_robot_position_lots, sync_robot_positions_with_broker
 from bd.settings_storage import (
     load_app_settings,
@@ -52,7 +52,7 @@ from tbank.active_orders import TBankActiveOrder, get_active_orders
 from tbank.balance import PortfolioBalance, get_balance
 from tbank.positions import TBankPortfolioPosition, get_portfolio_positions
 from tbank.order_book import get_best_order_book_prices
-from tbank.order_execution import TBankPostOrderResult, post_limit_order, post_market_order
+from tbank.order_execution import TBankPostOrderResult, cancel_order, post_limit_order, post_market_order
 from tbank.last_prices import get_last_price
 from tbank.shares import TBankShare, get_shares
 
@@ -195,6 +195,7 @@ class MainWindow(QMainWindow):
         self.money_table = QTableWidget()
         self.positions_table = QTableWidget()
         self.orders_table = QTableWidget()
+        self.cancel_active_order_button = QPushButton("Отменить выбранную активную заявку")
         self.info_tab_widget = QWidget()
         self.info_title_label = QLabel("")
         self.shares_table = QTableWidget()
@@ -396,6 +397,8 @@ class MainWindow(QMainWindow):
         info_layout.addWidget(self.money_table)
         info_layout.addWidget(self.positions_table)
         info_layout.addWidget(self.orders_table)
+        info_layout.addWidget(self.cancel_active_order_button)
+        self.cancel_active_order_button.clicked.connect(self.cancel_selected_active_order)
         self._hide_info_tables()
 
         self.tabs = QTabWidget()
@@ -1620,7 +1623,7 @@ class MainWindow(QMainWindow):
                 return share, result, order_type, quantity_lots, limit_price
 
         side_text = "покупку" if side == "BUY" else "продажу"
-        type_text = "лимитную" if order_type == "LIMIT" else "рыночную"
+        type_text = "лимитная" if order_type == "LIMIT" else "рыночная"
 
         if side == "BUY":
             size_text = f"Сумма: {buy_amount} ₽"
@@ -1814,6 +1817,8 @@ class MainWindow(QMainWindow):
         ):
             table.setVisible(False)
 
+        self.cancel_active_order_button.setVisible(False)
+
     def _show_info_table(self, title: str, table: QTableWidget) -> None:
         self.info_title_label.setText(title)
         self.info_title_label.setVisible(True)
@@ -1826,6 +1831,7 @@ class MainWindow(QMainWindow):
         ):
             current_table.setVisible(current_table is table)
 
+        self.cancel_active_order_button.setVisible(table is self.orders_table)
         self.tabs.setCurrentWidget(self.info_tab_widget)
 
     def _format_table_value(self, value: object) -> str:
@@ -2183,6 +2189,97 @@ class MainWindow(QMainWindow):
 
         self._log(f"Получено позиций: {len(positions)}")
         self._show_info_table("Позиции", self.positions_table)
+
+    def cancel_selected_active_order(self) -> None:
+        selected_row = self.orders_table.currentRow()
+
+        if selected_row < 0:
+            QMessageBox.warning(
+                self,
+                "Заявка не выбрана",
+                "Выберите активную заявку в таблице.",
+            )
+            return
+
+        order_id_item = self.orders_table.item(selected_row, 0)
+        order_type_item = self.orders_table.item(selected_row, 4)
+        ticker_item = self.orders_table.item(selected_row, 5)
+        class_code_item = self.orders_table.item(selected_row, 6)
+
+        if order_id_item is None:
+            QMessageBox.warning(
+                self,
+                "Ошибка",
+                "В выбранной строке нет order_id.",
+            )
+            return
+
+        broker_order_id = order_id_item.text().strip()
+
+        if not broker_order_id:
+            QMessageBox.warning(
+                self,
+                "Ошибка",
+                "order_id выбранной заявки пустой.",
+            )
+            return
+
+        order_type = order_type_item.text() if order_type_item is not None else ""
+        ticker = ticker_item.text() if ticker_item is not None else ""
+        class_code = class_code_item.text() if class_code_item is not None else ""
+
+        confirm_text = (
+            "Отменить активную заявку?\n\n"
+            f"{ticker}_{class_code}\n"
+            f"{order_type}\n"
+            f"order_id: {broker_order_id}"
+        )
+
+        answer = QMessageBox.question(
+            self,
+            "Отмена активной заявки",
+            confirm_text,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+
+        if answer != QMessageBox.StandardButton.Yes:
+            self._log("Отмена активной заявки отменена пользователем.")
+            return
+
+        try:
+            token = self._get_token()
+            account_id = self._get_account_id()
+        except ValueError as error:
+            QMessageBox.warning(self, "Ошибка", str(error))
+            return
+
+        async def task():
+            async with AsyncClient(token) as client:
+                await cancel_order(
+                    client=client,
+                    account_id=account_id,
+                    broker_order_id=broker_order_id,
+                )
+
+                return broker_order_id
+
+        self._run_async_task(
+            "cancel_active_order",
+            task,
+            self.show_cancel_active_order_result,
+        )
+
+    def show_cancel_active_order_result(self, broker_order_id: str) -> None:
+        was_robot_order = mark_robot_order_cancelled_by_broker_order(
+            broker_order_id=broker_order_id,
+        )
+        self.refresh_robot_orders_table()
+        self._log(
+            f"Активная заявка отменена: order_id={broker_order_id}. "
+            f"Заявка робота: {'да' if was_robot_order else 'нет'}"
+        )
+        self.load_active_orders()
 
     def load_active_orders(self) -> None:
         try:
