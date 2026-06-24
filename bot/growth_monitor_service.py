@@ -136,8 +136,8 @@ def save_dry_run_buy_intents(
     allow_buy = settings["allow_buy"] == "1"
     requested_amount = _parse_positive_decimal_setting(
         settings=settings,
-        key="manual_buy_amount",
-        label="Сумма одной покупки",
+        key="auto_buy_amount",
+        label="Сумма автопокупки",
     )
     bot_money_limit = _parse_positive_decimal_setting(
         settings=settings,
@@ -236,7 +236,7 @@ def build_buy_intent_log_lines(
 
     return [
         (
-            "Dry-run покупок: "
+            "Dry-run автопокупок: "
             f"планов={planned_count}, "
             f"пропущено={skipped_count}, "
             f"плановая сумма={planned_amount:.2f} ₽."

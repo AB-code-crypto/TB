@@ -437,8 +437,8 @@ async def execute_auto_trading_cycle(
     allow_sell = settings["allow_sell"] == "1"
     requested_amount = _parse_positive_decimal_setting(
         settings=settings,
-        key="manual_buy_amount",
-        label="Сумма одной покупки",
+        key="auto_buy_amount",
+        label="Сумма автопокупки",
     )
     bot_money_limit = _parse_positive_decimal_setting(
         settings=settings,

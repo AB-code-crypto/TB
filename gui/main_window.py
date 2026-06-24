@@ -156,8 +156,12 @@ class MainWindow(QMainWindow):
         self.take_profit_percent_edit = QLineEdit("1.00")
         self.stop_loss_percent_edit = QLineEdit("1.00")
         self.bot_money_limit_edit = QLineEdit("10000.00")
+        self.auto_buy_amount_edit = QLineEdit("500.00")
 
         self.robot_status_label = QLabel("Робот: выключен")
+        self.robot_mode_summary_label = QLabel("Режим: DRY-RUN")
+        self.robot_account_summary_label = QLabel("Account ID: не задан")
+        self.robot_selected_shares_summary_label = QLabel("Рабочих акций: 0")
         self.manual_mode_checkbox = QCheckBox("Ручной режим")
         self.manual_mode_checkbox.setChecked(False)
 
@@ -212,6 +216,19 @@ class MainWindow(QMainWindow):
         self.cancel_all_limit_orders_button = QPushButton("Отменить все лимитные заявки")
         self.info_tab_widget = QWidget()
         self.info_title_label = QLabel("")
+        self.startup_hint_label = QLabel(
+            "Порядок запуска:\n"
+            "1. Проверить подключение к T-Invest.\n"
+            "2. Загрузить акции и выбрать рабочий список.\n"
+            "3. Настроить стратегию и режим торговли.\n"
+            "4. Синхронизировать позиции робота.\n"
+            "5. Запустить мониторинг или боевую автоторговлю."
+        )
+        self.startup_hint_label.setWordWrap(True)
+        self.startup_hint_label.setAlignment(Qt.AlignmentFlag.AlignTop)
+        self.startup_hint_label.setStyleSheet(
+            "font-size: 14px; color: #555555; padding: 12px;"
+        )
         self.shares_table = QTableWidget()
         self.shares_tab_widget = QWidget()
         self.shares_search_edit = QLineEdit()
@@ -246,7 +263,10 @@ class MainWindow(QMainWindow):
         self.refresh_selected_shares_table()
         self.refresh_growth_monitor_tables()
 
-        self._log("GUI v0.1 запущен.")
+        self._refresh_robot_summary()
+        self._refresh_manual_trade_buttons_state()
+
+        self._log("GUI v1.0 запущен.")
         self._log(f"Рабочих акций загружено из SQLite: {len(self.selected_shares_by_uid)}")
         self._log(
             f"Поле токена: {'заполнено' if self.token_edit.text().strip() else 'пустое'}"
@@ -255,6 +275,52 @@ class MainWindow(QMainWindow):
             f"Account ID: {self.account_id_edit.text().strip() if self.account_id_edit.text().strip() else 'не задан'}"
         )
         self._log(f"Сохранённых рабочих акций загружено: {len(self.selected_shares_by_uid)}")
+
+    def _refresh_robot_summary(self) -> None:
+        if not hasattr(self, "robot_mode_summary_label"):
+            return
+
+        mode_text = (
+            "Режим: РЕАЛЬНАЯ ТОРГОВЛЯ"
+            if self.auto_trading_enabled_checkbox.isChecked()
+            else "Режим: DRY-RUN"
+        )
+        account_id = self.account_id_edit.text().strip() if hasattr(self, "account_id_edit") else ""
+
+        if not account_id:
+            account_id = "не задан"
+
+        self.robot_mode_summary_label.setText(mode_text)
+        self.robot_account_summary_label.setText(f"Account ID: {account_id}")
+        self.robot_selected_shares_summary_label.setText(
+            f"Рабочих акций: {len(self.selected_shares_by_uid)}"
+        )
+
+        if self.auto_trading_enabled_checkbox.isChecked():
+            self.robot_mode_summary_label.setStyleSheet(
+                "font-weight: bold; color: #8a1f11;"
+            )
+        else:
+            self.robot_mode_summary_label.setStyleSheet(
+                "font-weight: bold; color: #555555;"
+            )
+
+    def _refresh_manual_trade_buttons_state(self) -> None:
+        if not hasattr(self, "manual_market_buy_button"):
+            return
+
+        enabled = (
+            not self.robot_is_running
+            and self.manual_mode_checkbox.isChecked()
+        )
+
+        for button in (
+            self.manual_market_buy_button,
+            self.manual_limit_buy_button,
+            self.manual_market_sell_button,
+            self.manual_limit_sell_button,
+        ):
+            button.setEnabled(enabled)
 
     def _apply_saved_window_size(self, settings: dict[str, str]) -> None:
         width = 900
@@ -288,7 +354,18 @@ class MainWindow(QMainWindow):
         root = QWidget()
         root_layout = QVBoxLayout(root)
 
-        controls = QGroupBox("Проверка API")
+        status_controls = QGroupBox("Статус робота")
+        status_layout = QGridLayout(status_controls)
+        self.robot_status_label.setStyleSheet(
+            "font-weight: bold; font-size: 15px; color: #555555;"
+        )
+        self.robot_mode_summary_label.setStyleSheet("font-weight: bold;")
+        status_layout.addWidget(self.robot_status_label, 0, 0)
+        status_layout.addWidget(self.robot_mode_summary_label, 0, 1)
+        status_layout.addWidget(self.robot_account_summary_label, 0, 2)
+        status_layout.addWidget(self.robot_selected_shares_summary_label, 0, 3)
+
+        controls = QGroupBox("Подключение к T-Invest")
         controls_layout = QGridLayout(controls)
 
         controls_layout.addWidget(QLabel("Токен:"), 0, 0)
@@ -296,11 +373,17 @@ class MainWindow(QMainWindow):
 
         controls_layout.addWidget(QLabel("Account ID:"), 1, 0)
         controls_layout.addWidget(self.account_id_edit, 1, 1, 1, 3)
+        self.account_id_edit.textChanged.connect(
+            lambda text: self._refresh_robot_summary()
+        )
+        self.auto_trading_enabled_checkbox.toggled.connect(
+            lambda checked: self._refresh_robot_summary()
+        )
 
-        self.accounts_button = QPushButton("Получить аккаунты")
+        self.accounts_button = QPushButton("Проверить подключение")
         balance_button = QPushButton("Получить баланс")
         active_orders_button = QPushButton("Активные заявки")
-        self.shares_button = QPushButton("Получить акции")
+        self.shares_button = QPushButton("Загрузить акции")
 
         self.accounts_button.clicked.connect(self.load_accounts)
         balance_button.clicked.connect(self.load_balance)
@@ -311,9 +394,6 @@ class MainWindow(QMainWindow):
         controls_layout.addWidget(balance_button, 2, 1)
         controls_layout.addWidget(active_orders_button, 2, 2)
         controls_layout.addWidget(self.shares_button, 2, 3)
-
-        controls_layout.addWidget(self.qualified_investor_checkbox, 3, 1)
-        controls_layout.addWidget(self.only_liquid_shares_checkbox, 3, 2, 1, 2)
 
         self.qualified_investor_checkbox.toggled.connect(
             lambda checked: self.refresh_shares_after_filter_change()
@@ -326,50 +406,78 @@ class MainWindow(QMainWindow):
         self.clear_selected_shares_button.clicked.connect(self.clear_selected_shares)
         self.update_robot_positions_button.clicked.connect(self.update_robot_positions_from_table)
 
-        strategy_controls = QGroupBox("Настройки стратегии и режим")
+        strategy_controls = QGroupBox("Настройки стратегии")
         strategy_layout = QGridLayout(strategy_controls)
 
-        strategy_layout.addWidget(QLabel("Рост для покупки, %:"), 0, 0)
+        strategy_layout.addWidget(QLabel("Купить при росте, %:"), 0, 0)
         strategy_layout.addWidget(self.growth_percent_edit, 0, 1)
 
-        strategy_layout.addWidget(QLabel("Интервал расчёта роста:"), 0, 4)
-        strategy_layout.addWidget(self.growth_candle_interval_combo, 0, 5, 1, 2)
-        strategy_layout.addWidget(QLabel("Интервал проверки, сек:"), 1, 4)
-        strategy_layout.addWidget(self.scan_interval_seconds_edit, 1, 5, 1, 2)
-        strategy_layout.addWidget(QLabel("Макс. возраст цены, сек:"), 2, 4)
-        strategy_layout.addWidget(self.max_price_age_seconds_edit, 2, 5, 1, 2)
-        strategy_layout.addWidget(QLabel("Хранить снимки цен, дней:"), 3, 4)
-        strategy_layout.addWidget(self.price_snapshot_retention_days_edit, 3, 5, 1, 2)
+        strategy_layout.addWidget(QLabel("Сумма автопокупки, ₽:"), 0, 2)
+        strategy_layout.addWidget(self.auto_buy_amount_edit, 0, 3)
 
-        strategy_layout.addWidget(QLabel("Продать при прибыли, %:"), 0, 2)
-        strategy_layout.addWidget(self.take_profit_percent_edit, 0, 3)
+        strategy_layout.addWidget(QLabel("Лимит денег для бота, ₽:"), 0, 4)
+        strategy_layout.addWidget(self.bot_money_limit_edit, 0, 5)
 
-        strategy_layout.addWidget(QLabel("Продать при убытке, %:"), 1, 0)
-        strategy_layout.addWidget(self.stop_loss_percent_edit, 1, 1)
+        strategy_layout.addWidget(QLabel("Продать при прибыли, %:"), 1, 0)
+        strategy_layout.addWidget(self.take_profit_percent_edit, 1, 1)
 
-        strategy_layout.addWidget(QLabel("Лимит денег для бота, ₽:"), 1, 2)
-        strategy_layout.addWidget(self.bot_money_limit_edit, 1, 3)
+        strategy_layout.addWidget(QLabel("Продать при убытке, %:"), 1, 2)
+        strategy_layout.addWidget(self.stop_loss_percent_edit, 1, 3)
+
+        strategy_layout.addWidget(QLabel("Интервал расчёта роста:"), 1, 4)
+        strategy_layout.addWidget(self.growth_candle_interval_combo, 1, 5)
+
+        strategy_layout.addWidget(QLabel("Интервал проверки, сек:"), 2, 0)
+        strategy_layout.addWidget(self.scan_interval_seconds_edit, 2, 1)
+
+        strategy_layout.addWidget(QLabel("Макс. возраст цены, сек:"), 2, 2)
+        strategy_layout.addWidget(self.max_price_age_seconds_edit, 2, 3)
+
+        strategy_layout.addWidget(QLabel("Хранить снимки цен, дней:"), 2, 4)
+        strategy_layout.addWidget(self.price_snapshot_retention_days_edit, 2, 5)
+
+        strategy_layout.addWidget(QLabel("Разрешения:"), 3, 0)
+        strategy_layout.addWidget(self.allow_buy_checkbox, 3, 1)
+        strategy_layout.addWidget(self.allow_sell_checkbox, 3, 2)
 
         self.robot_toggle_button = QPushButton("Включить и синхронизировать")
         self.robot_toggle_button.setCheckable(True)
         self.robot_toggle_button.toggled.connect(self.toggle_robot_monitoring)
         self._set_robot_visual_state("stopped")
 
-        strategy_layout.addWidget(self.robot_status_label, 2, 0)
-        strategy_layout.addWidget(self.robot_toggle_button, 2, 1, 1, 2)
-
-        strategy_layout.addWidget(QLabel("Разрешения:"), 3, 0)
-        strategy_layout.addWidget(self.allow_buy_checkbox, 3, 1)
-        strategy_layout.addWidget(self.allow_sell_checkbox, 3, 2)
-        strategy_layout.addWidget(self.auto_trading_enabled_checkbox, 3, 3, 1, 3)
-
         self.save_state_button = QPushButton("Сохранить настройки")
         self.save_state_button.clicked.connect(self.save_current_state)
 
         self.reset_state_button = QPushButton("Сбросить настройки")
         self.reset_state_button.clicked.connect(self.reset_current_state)
-        strategy_layout.addWidget(self.save_state_button, 4, 0, 1, 2)
-        strategy_layout.addWidget(self.reset_state_button, 4, 2, 1, 2)
+
+        strategy_layout.addWidget(self.robot_toggle_button, 4, 0, 1, 2)
+        strategy_layout.addWidget(self.save_state_button, 4, 2, 1, 2)
+        strategy_layout.addWidget(self.reset_state_button, 4, 4, 1, 2)
+
+        trading_mode_controls = QGroupBox("Режим торговли")
+        trading_mode_layout = QGridLayout(trading_mode_controls)
+        self.auto_trading_enabled_checkbox.setText("Боевой режим: реальные рыночные заявки")
+        self.auto_trading_enabled_checkbox.setStyleSheet(
+            "font-weight: bold; color: #8a1f11;"
+        )
+
+        trading_mode_help_label = QLabel(
+            "По умолчанию робот работает в тестовом режиме: считает сигналы и планы, "
+            "но не отправляет заявки брокеру."
+        )
+        trading_mode_help_label.setWordWrap(True)
+
+        trading_mode_warning_label = QLabel(
+            "В боевом режиме робот отправляет реальные рыночные заявки."
+        )
+        trading_mode_warning_label.setStyleSheet(
+            "font-weight: bold; color: #8a1f11;"
+        )
+
+        trading_mode_layout.addWidget(trading_mode_help_label, 0, 0, 1, 2)
+        trading_mode_layout.addWidget(self.auto_trading_enabled_checkbox, 1, 0)
+        trading_mode_layout.addWidget(trading_mode_warning_label, 1, 1)
 
         self.accounts_table.cellDoubleClicked.connect(self.select_account_from_table)
         self.apply_checked_shares_button.clicked.connect(
@@ -380,6 +488,11 @@ class MainWindow(QMainWindow):
         )
 
         shares_tab_layout = QVBoxLayout(self.shares_tab_widget)
+        shares_filters_layout = QGridLayout()
+        shares_filters_layout.addWidget(QLabel("Фильтры акций:"), 0, 0)
+        shares_filters_layout.addWidget(self.qualified_investor_checkbox, 0, 1)
+        shares_filters_layout.addWidget(self.only_liquid_shares_checkbox, 0, 2)
+        shares_tab_layout.addLayout(shares_filters_layout)
         shares_tab_layout.addWidget(QLabel("Поиск акции:"))
         shares_tab_layout.addWidget(self.shares_search_edit)
         shares_tab_layout.addWidget(self.shares_search_status_label)
@@ -407,15 +520,18 @@ class MainWindow(QMainWindow):
         self.manual_market_sell_button.clicked.connect(self.manual_market_sell)
         self.manual_limit_sell_button.clicked.connect(self.manual_limit_sell)
         self.manual_last_price_button.clicked.connect(self.refresh_manual_last_price)
+        self.manual_mode_checkbox.toggled.connect(
+            lambda checked: self._refresh_manual_trade_buttons_state()
+        )
 
-        manual_trading_controls = QGroupBox("Ручная торговля")
+        manual_trading_controls = QGroupBox("Ручная торговля (проверка и аварийное управление)")
         manual_trading_controls_layout = QGridLayout(manual_trading_controls)
 
         manual_trading_controls_layout.addWidget(QLabel("Инструмент:"), 0, 0)
         manual_trading_controls_layout.addWidget(self.manual_instrument_id_edit, 0, 1, 1, 2)
         manual_trading_controls_layout.addWidget(self.manual_mode_checkbox, 0, 3)
 
-        manual_trading_controls_layout.addWidget(QLabel("Сумма одной покупки, ₽:"), 1, 0)
+        manual_trading_controls_layout.addWidget(QLabel("Сумма ручной покупки, ₽:"), 1, 0)
         manual_trading_controls_layout.addWidget(self.manual_buy_amount_edit, 1, 1)
 
         manual_trading_controls_layout.addWidget(QLabel("Объём продажи, лоты:"), 1, 2)
@@ -435,6 +551,7 @@ class MainWindow(QMainWindow):
         info_layout = QVBoxLayout(self.info_tab_widget)
         self.info_title_label.setStyleSheet("font-weight: bold;")
         self.info_title_label.setVisible(False)
+        info_layout.addWidget(self.startup_hint_label)
         info_layout.addWidget(self.info_title_label)
         info_layout.addWidget(self.accounts_table)
         info_layout.addWidget(self.money_table)
@@ -493,8 +610,10 @@ class MainWindow(QMainWindow):
 
         self.tabs.addTab(self.log_edit, "Лог")
 
+        root_layout.addWidget(status_controls)
         root_layout.addWidget(controls)
         root_layout.addWidget(strategy_controls)
+        root_layout.addWidget(trading_mode_controls)
         root_layout.addWidget(manual_trading_controls)
         root_layout.addWidget(self.tabs)
 
@@ -534,6 +653,9 @@ class MainWindow(QMainWindow):
         if "bot_money_limit" in settings:
             self.bot_money_limit_edit.setText(settings["bot_money_limit"])
 
+        if "auto_buy_amount" in settings:
+            self.auto_buy_amount_edit.setText(settings["auto_buy_amount"])
+
         if "manual_instrument_id" in settings:
             self.manual_instrument_id_edit.setText(settings["manual_instrument_id"])
 
@@ -566,6 +688,7 @@ class MainWindow(QMainWindow):
             self.allow_sell_checkbox.setChecked(settings["allow_sell"] == "1")
 
         self.refresh_shares_filters_label()
+        self._refresh_robot_summary()
 
     def save_current_state(self) -> None:
         settings = {
@@ -581,6 +704,7 @@ class MainWindow(QMainWindow):
             "take_profit_percent": self.take_profit_percent_edit.text().strip(),
             "stop_loss_percent": self.stop_loss_percent_edit.text().strip(),
             "bot_money_limit": self.bot_money_limit_edit.text().strip(),
+            "auto_buy_amount": self.auto_buy_amount_edit.text().strip(),
             "manual_mode": "0",
             "auto_trading_enabled": "1" if self.auto_trading_enabled_checkbox.isChecked() else "0",
             "allow_buy": "1" if self.allow_buy_checkbox.isChecked() else "0",
@@ -636,6 +760,7 @@ class MainWindow(QMainWindow):
         self.take_profit_percent_edit.setText("1.00")
         self.stop_loss_percent_edit.setText("1.00")
         self.bot_money_limit_edit.setText("10000.00")
+        self.auto_buy_amount_edit.setText("500.00")
 
         self.manual_instrument_id_edit.setText("SBER_TQBR")
         self.manual_buy_amount_edit.setText("10000.00")
@@ -651,6 +776,8 @@ class MainWindow(QMainWindow):
         self.refresh_selected_shares_table()
         self.refresh_available_shares_table()
         self.refresh_shares_filters_label()
+        self._refresh_robot_summary()
+        self._refresh_manual_trade_buttons_state()
 
         self._log("Настройки сброшены.")
         self._log("Рабочий список акций очищен.")
@@ -728,7 +855,7 @@ class MainWindow(QMainWindow):
     def _get_strategy_settings(self) -> dict[str, object]:
         growth_percent = self._parse_decimal_field(
             self.growth_percent_edit,
-            "Рост для покупки, %",
+            "Купить при росте, %",
         )
 
         growth_candle_interval = self.growth_candle_interval_combo.currentText()
@@ -780,9 +907,9 @@ class MainWindow(QMainWindow):
             self.bot_money_limit_edit,
             "Лимит денег для бота",
         )
-        manual_buy_amount = self._parse_decimal_field(
-            self.manual_buy_amount_edit,
-            "Сумма одной покупки, ₽",
+        auto_buy_amount = self._parse_decimal_field(
+            self.auto_buy_amount_edit,
+            "Сумма автопокупки, ₽",
         )
 
         if growth_percent <= 0:
@@ -797,8 +924,8 @@ class MainWindow(QMainWindow):
         if bot_money_limit <= 0:
             raise ValueError("Лимит денег для бота должен быть больше 0.")
 
-        if manual_buy_amount <= 0:
-            raise ValueError("Сумма одной покупки должна быть больше 0.")
+        if auto_buy_amount <= 0:
+            raise ValueError("Сумма автопокупки должна быть больше 0.")
 
         return {
             "growth_percent": growth_percent,
@@ -810,7 +937,7 @@ class MainWindow(QMainWindow):
             "take_profit_percent": take_profit_percent,
             "stop_loss_percent": stop_loss_percent,
             "bot_money_limit": bot_money_limit,
-            "manual_buy_amount": manual_buy_amount,
+            "auto_buy_amount": auto_buy_amount,
             "auto_trading_enabled": self.auto_trading_enabled_checkbox.isChecked(),
         }
 
@@ -830,6 +957,7 @@ class MainWindow(QMainWindow):
             self.take_profit_percent_edit,
             self.stop_loss_percent_edit,
             self.bot_money_limit_edit,
+            self.auto_buy_amount_edit,
             self.manual_mode_checkbox,
             self.auto_trading_enabled_checkbox,
             self.allow_buy_checkbox,
@@ -855,6 +983,8 @@ class MainWindow(QMainWindow):
 
         for widget in widgets:
             widget.setEnabled(enabled)
+
+        self._refresh_manual_trade_buttons_state()
 
     def _reject_robot_start(self, message: str) -> None:
         clean_message = message.strip()
@@ -899,6 +1029,24 @@ class MainWindow(QMainWindow):
         except ValueError as error:
             self._reject_robot_start(str(error))
             return
+
+        if settings["auto_trading_enabled"]:
+            answer = QMessageBox.question(
+                self,
+                "Реальная автоторговля",
+                (
+                    "Вы включаете реальную автоторговлю. "
+                    "Робот будет отправлять реальные рыночные заявки.\n\n"
+                    "Продолжить?"
+                ),
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+
+            if answer != QMessageBox.StandardButton.Yes:
+                self._log("Запуск реальной автоторговли отменён пользователем.")
+                self._set_robot_visual_state("stopped")
+                return
 
         client_is_qualified = self.qualified_investor_checkbox.isChecked()
         only_liquid_shares = self.only_liquid_shares_checkbox.isChecked()
@@ -1093,7 +1241,7 @@ class MainWindow(QMainWindow):
         self._log(
             f"Хранение снимков цен: {settings['price_snapshot_retention_days']} дней."
         )
-        self._log(f"Сумма одной покупки: {settings['manual_buy_amount']} ₽")
+        self._log(f"Сумма автопокупки: {settings['auto_buy_amount']} ₽")
         if settings["auto_trading_enabled"]:
             self._log(
                 "Реальная автоторговля включена: входы и выходы выполняются "
@@ -1377,6 +1525,9 @@ class MainWindow(QMainWindow):
             raise ValueError(f"Неизвестное визуальное состояние робота: {state}")
 
         self.robot_toggle_button.blockSignals(False)
+
+        self._refresh_robot_summary()
+        self._refresh_manual_trade_buttons_state()
 
     def _cleanup_growth_monitor_worker(self) -> None:
         self.growth_monitor_thread = None
@@ -1668,11 +1819,11 @@ class MainWindow(QMainWindow):
             if side == "BUY":
                 buy_amount = self._parse_decimal_field(
                     self.manual_buy_amount_edit,
-                    "Сумма одной покупки, ₽",
+                    "Сумма ручной покупки, ₽",
                 )
 
                 if buy_amount <= 0:
-                    raise ValueError("Сумма одной покупки должна быть больше 0.")
+                    raise ValueError("Сумма ручной покупки должна быть больше 0.")
 
                 sell_lots = 0
             else:
@@ -1742,7 +1893,7 @@ class MainWindow(QMainWindow):
 
                     if quantity_lots <= 0:
                         raise ValueError(
-                            "Суммы одной покупки не хватает даже на 1 лот: "
+                            "Суммы ручной покупки не хватает даже на 1 лот: "
                             f"лот стоит примерно {one_lot_amount:.2f} ₽."
                         )
 
@@ -2016,6 +2167,7 @@ class MainWindow(QMainWindow):
 
     def _hide_info_tables(self) -> None:
         self.info_title_label.setVisible(False)
+        self.startup_hint_label.setVisible(True)
 
         for table in (
             self.accounts_table,
@@ -2030,6 +2182,7 @@ class MainWindow(QMainWindow):
     def _show_info_table(self, title: str, table: QTableWidget) -> None:
         self.info_title_label.setText(title)
         self.info_title_label.setVisible(True)
+        self.startup_hint_label.setVisible(False)
 
         for current_table in (
             self.accounts_table,
@@ -2109,6 +2262,7 @@ class MainWindow(QMainWindow):
 
         self.account_id_edit.setText(account_id_item.text())
         self._log(f"Account ID выбран из таблицы: {account_id_item.text()}")
+        self._refresh_robot_summary()
 
     def cancel_robot_start_after_sync(self) -> None:
         self.pending_robot_start_settings = None
@@ -2304,6 +2458,7 @@ class MainWindow(QMainWindow):
         if len(accounts) == 1 and not self.robot_is_running:
             self.account_id_edit.setText(accounts[0].account_id)
             self._log(f"Account ID выбран автоматически: {accounts[0].account_id}")
+            self._refresh_robot_summary()
 
         self._log(f"Получено аккаунтов: {len(accounts)}")
         self._show_info_table("Аккаунты", self.accounts_table)
@@ -3049,4 +3204,5 @@ class MainWindow(QMainWindow):
         self.selected_shares_table.setColumnHidden(6, True)  # currency нужен коду, но не нужен клиенту
         self.selected_shares_table.setColumnHidden(7, True)  # real_exchange нужен коду, но не нужен клиенту
         self.selected_shares_table.setColumnHidden(8, True)  # uid: нужен коду, но не нужен клиенту
+        self._refresh_robot_summary()
 
