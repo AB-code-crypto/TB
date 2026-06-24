@@ -913,6 +913,7 @@ class MainWindow(QMainWindow):
         sync_report = sync_robot_positions_with_broker(
             account_id=account_id,
             broker_positions=broker_positions,
+            shares=shares,
         )
         self.refresh_robot_positions_table()
         self._log(
@@ -1530,25 +1531,30 @@ class MainWindow(QMainWindow):
 
         async def task():
             async with AsyncClient(token) as client:
-                return await get_portfolio_positions(client, account_id)
+                positions = await get_portfolio_positions(client, account_id)
+                shares = await get_shares(client)
+
+                return positions, shares
 
         self._run_async_task(
             "robot_position_sync",
             task,
-            lambda positions, current_account_id=account_id: self.show_robot_position_sync(
+            lambda result, current_account_id=account_id: self.show_robot_position_sync(
                 current_account_id,
-                positions,
+                result,
             ),
         )
 
     def show_robot_position_sync(
         self,
         account_id: str,
-        positions: list[TBankPortfolioPosition],
+        result: tuple[list[TBankPortfolioPosition], list[TBankShare]],
     ) -> None:
+        positions, shares = result
         sync_report = sync_robot_positions_with_broker(
             account_id=account_id,
             broker_positions=positions,
+            shares=shares,
         )
         self.refresh_robot_positions_table()
         self.monitoring_tabs.setCurrentWidget(self.robot_positions_table)

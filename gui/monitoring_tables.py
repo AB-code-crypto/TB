@@ -52,15 +52,11 @@ def fill_robot_positions_table(table: QTableWidget) -> None:
     positions = list_robot_positions()
 
     headers = [
-        "Счёт",
-        "Инструмент",
         "Название",
-        "Лот",
         "Лотов робота",
-        "Акций робота",
-        "Средняя цена",
+        "Средняя цена робота",
         "Лотов у брокера",
-        "Внешних лотов",
+        "Внешних лотов клиента",
         "Комментарий",
         "Синхронизация UTC",
     ]
@@ -70,20 +66,15 @@ def fill_robot_positions_table(table: QTableWidget) -> None:
     table.setRowCount(len(positions))
 
     for row_index, position in enumerate(positions):
-        _set_table_value(table, row_index, 0, position.account_id)
-        _set_table_value(table, row_index, 1, f"{position.ticker}_{position.class_code}")
-        _set_table_value(table, row_index, 2, position.name)
-        _set_table_value(table, row_index, 3, position.lot)
-        _set_table_value(table, row_index, 4, position.robot_lots)
-        _set_table_value(table, row_index, 5, position.robot_shares)
-        _set_table_value(table, row_index, 6, position.avg_price)
-        _set_table_value(table, row_index, 7, position.last_broker_lots)
-        _set_table_value(table, row_index, 8, position.external_lots)
-        _set_table_value(table, row_index, 9, position.sync_note)
-        _set_table_value(table, row_index, 10, position.last_sync_at_utc)
+        _set_table_value(table, row_index, 0, position.name)
+        _set_table_value(table, row_index, 1, position.robot_lots)
+        _set_table_value(table, row_index, 2, position.avg_price)
+        _set_table_value(table, row_index, 3, position.last_broker_lots)
+        _set_table_value(table, row_index, 4, position.external_lots)
+        _set_table_value(table, row_index, 5, position.sync_note)
+        _set_table_value(table, row_index, 6, position.last_sync_at_utc)
 
     _fit_table_columns(table)
-
 
 def fill_growth_current_table(table: QTableWidget) -> None:
     states = list_growth_current_states(limit=500)
