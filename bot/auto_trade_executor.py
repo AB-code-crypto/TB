@@ -9,6 +9,7 @@ from bd.robot_position import apply_robot_order_fill, list_robot_positions
 from bd.settings_storage import load_app_settings, load_selected_shares
 from bot.growth_scanner import GrowthScanReport, GrowthScanResult
 from tbank.balance import PortfolioBalance, get_balance
+from tbank.last_prices import get_last_price
 from tbank.order_execution import TBankPostOrderResult, post_market_order
 from tbank.shares import TBankShare
 
@@ -191,13 +192,36 @@ async def _execute_exit_orders(
             continue
 
         result = results_by_uid.get(position.instrument_uid)
+        price_source = "текущий расчёт роста"
 
         if result is None:
-            log_lines.append(
-                "Автопродажа пропущена: нет актуальной цены в текущем расчёте: "
-                f"{position.ticker}_{position.class_code}."
+            try:
+                last_price = await get_last_price(
+                    client=client,
+                    instrument_id=share.uid,
+                )
+            except Exception as error:
+                log_lines.append(
+                    "Автопродажа пропущена: цена не получена ни из текущего расчёта, "
+                    "ни отдельным запросом: "
+                    f"{position.ticker}_{position.class_code}, "
+                    f"error={type(error).__name__}: {error}"
+                )
+                continue
+
+            current_price = last_price.price
+            price_source = (
+                "отдельный запрос последней цены, "
+                f"time_utc={last_price.time}"
             )
-            continue
+            log_lines.append(
+                "Цена для проверки выхода получена отдельным запросом: "
+                f"{position.ticker}_{position.class_code}, "
+                f"price={current_price}, "
+                f"time_utc={last_price.time}."
+            )
+        else:
+            current_price = result.current_price
 
         if position.avg_price <= 0:
             log_lines.append(
@@ -207,7 +231,7 @@ async def _execute_exit_orders(
             continue
 
         position_growth_percent = _calculate_position_growth_percent(
-            current_price=result.current_price,
+            current_price=current_price,
             avg_price=position.avg_price,
         )
 
@@ -224,7 +248,7 @@ async def _execute_exit_orders(
         else:
             continue
 
-        estimated_amount = result.current_price * Decimal(position.robot_lots * position.lot)
+        estimated_amount = current_price * Decimal(position.robot_lots * position.lot)
 
         try:
             order_report = await _send_robot_market_order(
@@ -239,7 +263,10 @@ async def _execute_exit_orders(
             log_lines.append(
                 "Автопродажа не отправлена: "
                 f"{position.ticker}_{position.class_code}, "
-                f"reason={exit_reason}, error={type(error).__name__}: {error}"
+                f"reason={exit_reason}, "
+                f"price={current_price}, "
+                f"price_source={price_source}, "
+                f"error={type(error).__name__}: {error}"
             )
             continue
 
@@ -251,13 +278,14 @@ async def _execute_exit_orders(
             f"{position.ticker}_{position.class_code}, "
             f"лотов={order_report.quantity_lots}, "
             f"причина={exit_reason}, "
+            f"price={current_price}, "
+            f"price_source={price_source}, "
             f"broker_order_id={order_report.result.broker_order_id}, "
             f"status={order_report.result.execution_report_status}, "
             f"исполнено={order_report.result.lots_executed}."
         )
 
     return ExitOrdersResult(log_lines=log_lines, exited_instrument_uids=exited_instrument_uids)
-
 
 async def _execute_entry_orders(
     client,
@@ -386,7 +414,12 @@ async def _execute_entry_orders(
             log_lines.append(
                 "Автопокупка не отправлена: "
                 f"{signal.ticker}_{signal.class_code}, "
-                f"signal_id={signal_id}, error={type(error).__name__}: {error}"
+                f"signal_id={signal_id}, "
+                f"лотов={quantity_lots}, "
+                f"примерная сумма={estimated_amount:.2f} ₽, "
+                f"lot={signal.lot}, "
+                f"current_price={signal.current_price}, "
+                f"error={type(error).__name__}: {error}"
             )
             continue
 

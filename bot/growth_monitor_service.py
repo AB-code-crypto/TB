@@ -318,6 +318,15 @@ def build_success_log_lines(
         f"Свечи из API: {report.candle_api_requests}",
     ]
 
+    if report.skipped:
+        lines.append("Причины пропуска инструментов:")
+
+        for number, skipped_item in enumerate(report.skipped[:10], start=1):
+            lines.append(f"{number}. {skipped_item}")
+
+        if len(report.skipped) > 10:
+            lines.append(f"... ещё {len(report.skipped) - 10}")
+
     if report.signals:
         lines.append("Сигналы текущего расчёта:")
 
