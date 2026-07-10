@@ -189,7 +189,7 @@ class MainWindow(QMainWindow):
         self.growth_percent_edit = QLineEdit("1.00")
         self.growth_candle_interval_combo = QComboBox()
         self.growth_candle_interval_combo.addItems(list(GROWTH_CANDLE_INTERVALS.keys()))
-        self.growth_candle_interval_combo.setCurrentText("30 секунд")
+        self.growth_candle_interval_combo.setCurrentText("1 минута")
         self.scan_interval_seconds_edit = QLineEdit("10")
         self.max_price_age_seconds_edit = QLineEdit("30")
         self.take_profit_percent_edit = QLineEdit("1.00")
@@ -799,9 +799,6 @@ class MainWindow(QMainWindow):
             self.auto_trading_enabled_checkbox
         )
         strategy_options_layout.addStretch(1)
-        strategy_options_layout.addWidget(
-            self.database_maintenance_button
-        )
         strategy_layout.addWidget(
             strategy_options_widget, 5, 0, 1, 6
         )
@@ -817,9 +814,28 @@ class MainWindow(QMainWindow):
         self.reset_state_button = QPushButton("Сбросить настройки")
         self.reset_state_button.clicked.connect(self.reset_current_state)
 
-        strategy_layout.addWidget(self.robot_toggle_button, 6, 0, 1, 2)
-        strategy_layout.addWidget(self.save_state_button, 6, 2, 1, 2)
-        strategy_layout.addWidget(self.reset_state_button, 6, 4, 1, 2)
+        strategy_actions_widget = QWidget()
+        strategy_actions_layout = QHBoxLayout(strategy_actions_widget)
+        strategy_actions_layout.setContentsMargins(0, 0, 0, 0)
+
+        strategy_action_buttons = (
+            self.robot_toggle_button,
+            self.save_state_button,
+            self.reset_state_button,
+            self.database_maintenance_button,
+        )
+
+        for button in strategy_action_buttons:
+            button.setSizePolicy(
+                QSizePolicy.Policy.Expanding,
+                QSizePolicy.Policy.Fixed,
+            )
+            button.setMinimumHeight(32)
+            strategy_actions_layout.addWidget(button, 1)
+
+        strategy_layout.addWidget(
+            strategy_actions_widget, 6, 0, 1, 6
+        )
 
         strategy_layout.setColumnStretch(1, 1)
         strategy_layout.setColumnStretch(3, 1)
@@ -891,10 +907,32 @@ class MainWindow(QMainWindow):
         manual_trading_controls_layout.addWidget(self.manual_last_price_button, 2, 2)
         manual_trading_controls_layout.addWidget(self.manual_last_price_label, 2, 3)
 
-        manual_trading_controls_layout.addWidget(self.manual_market_buy_button, 3, 0)
-        manual_trading_controls_layout.addWidget(self.manual_limit_buy_button, 3, 1)
-        manual_trading_controls_layout.addWidget(self.manual_market_sell_button, 3, 2)
-        manual_trading_controls_layout.addWidget(self.manual_limit_sell_button, 3, 3)
+        manual_trade_buttons_widget = QWidget()
+        manual_trade_buttons_layout = QHBoxLayout(
+            manual_trade_buttons_widget
+        )
+        manual_trade_buttons_layout.setContentsMargins(0, 0, 0, 0)
+
+        manual_trade_buttons = (
+            self.manual_market_buy_button,
+            self.manual_limit_buy_button,
+            self.manual_market_sell_button,
+            self.manual_limit_sell_button,
+        )
+
+        for button in manual_trade_buttons:
+            button.setSizePolicy(
+                QSizePolicy.Policy.Expanding,
+                QSizePolicy.Policy.Fixed,
+            )
+            button.setMinimumHeight(32)
+            button.setFont(self.font())
+            button.setStyleSheet("")
+            manual_trade_buttons_layout.addWidget(button, 1)
+
+        manual_trading_controls_layout.addWidget(
+            manual_trade_buttons_widget, 3, 0, 1, 4
+        )
 
         info_layout = QVBoxLayout(self.info_tab_widget)
         self.info_title_label.setStyleSheet("font-weight: bold;")
@@ -1185,7 +1223,7 @@ class MainWindow(QMainWindow):
         self.allow_sell_checkbox.setChecked(True)
 
         self.growth_percent_edit.setText("1.00")
-        self.growth_candle_interval_combo.setCurrentText("30 секунд")
+        self.growth_candle_interval_combo.setCurrentText("1 минута")
         self.scan_interval_seconds_edit.setText("10")
         self.max_price_age_seconds_edit.setText("30")
 
@@ -3559,19 +3597,109 @@ class MainWindow(QMainWindow):
         self._log(f"Получено аккаунтов: {len(accounts)}")
         self._show_info_table("Аккаунты", self.accounts_table)
 
+    async def _resolve_account_id_for_request(
+        self,
+        client,
+        requested_account_id: str,
+    ) -> tuple[str, bool]:
+        accounts = await get_accounts(client)
+        account_ids = {
+            account.account_id
+            for account in accounts
+        }
+
+        if requested_account_id in account_ids:
+            return requested_account_id, False
+
+        if len(accounts) == 1:
+            return accounts[0].account_id, True
+
+        if not accounts:
+            raise ValueError(
+                "T-Invest API не вернул ни одного доступного брокерского счёта "
+                "для текущего токена."
+            )
+
+        available_accounts = ", ".join(
+            f"{account.name}: {account.account_id}"
+            for account in accounts
+        )
+        raise ValueError(
+            "Указанный Account ID не найден среди счетов, доступных "
+            "текущему токену. Нажмите «Проверить подключение» и выберите "
+            f"нужный счёт. Доступные счета: {available_accounts}"
+        )
+
+    def _apply_resolved_account_id(
+        self,
+        resolved_account_id: str,
+        was_auto_selected: bool,
+    ) -> None:
+        current_account_id = self.account_id_edit.text().strip()
+
+        if resolved_account_id == current_account_id:
+            return
+
+        self.account_id_edit.setText(resolved_account_id)
+        save_app_settings(
+            {
+                "account_id": resolved_account_id,
+            }
+        )
+
+        if was_auto_selected:
+            self._log(
+                "Account ID исправлен автоматически: "
+                f"{resolved_account_id}. Для токена доступен один счёт."
+            )
+        else:
+            self._log(
+                f"Account ID обновлён: {resolved_account_id}."
+            )
+
     def load_balance(self) -> None:
         try:
             token = self._get_token()
-            account_id = self._get_account_id()
+            requested_account_id = self._get_account_id()
         except ValueError as error:
             QMessageBox.warning(self, "Ошибка", str(error))
             return
 
         async def task():
             async with AsyncClient(token) as client:
-                return await get_balance(client, account_id)
+                resolved_account_id, was_auto_selected = (
+                    await self._resolve_account_id_for_request(
+                        client=client,
+                        requested_account_id=requested_account_id,
+                    )
+                )
+                balance = await get_balance(
+                    client,
+                    resolved_account_id,
+                )
 
-        self._run_async_task("balance", task, self.show_balance)
+                return (
+                    resolved_account_id,
+                    was_auto_selected,
+                    balance,
+                )
+
+        self._run_async_task(
+            "balance",
+            task,
+            self.show_balance_for_account,
+        )
+
+    def show_balance_for_account(
+        self,
+        result: tuple[str, bool, PortfolioBalance],
+    ) -> None:
+        resolved_account_id, was_auto_selected, balance = result
+        self._apply_resolved_account_id(
+            resolved_account_id=resolved_account_id,
+            was_auto_selected=was_auto_selected,
+        )
+        self.show_balance(balance)
 
     def show_balance(self, balance: PortfolioBalance) -> None:
         self._apply_runtime_balance(balance)
@@ -3603,16 +3731,50 @@ class MainWindow(QMainWindow):
     def load_positions(self) -> None:
         try:
             token = self._get_token()
-            account_id = self._get_account_id()
+            requested_account_id = self._get_account_id()
         except ValueError as error:
             QMessageBox.warning(self, "Ошибка", str(error))
             return
 
         async def task():
             async with AsyncClient(token) as client:
-                return await get_portfolio_positions(client, account_id)
+                resolved_account_id, was_auto_selected = (
+                    await self._resolve_account_id_for_request(
+                        client=client,
+                        requested_account_id=requested_account_id,
+                    )
+                )
+                positions = await get_portfolio_positions(
+                    client,
+                    resolved_account_id,
+                )
 
-        self._run_async_task("positions", task, self.show_positions)
+                return (
+                    resolved_account_id,
+                    was_auto_selected,
+                    positions,
+                )
+
+        self._run_async_task(
+            "positions",
+            task,
+            self.show_positions_for_account,
+        )
+
+    def show_positions_for_account(
+        self,
+        result: tuple[
+            str,
+            bool,
+            list[TBankPortfolioPosition],
+        ],
+    ) -> None:
+        resolved_account_id, was_auto_selected, positions = result
+        self._apply_resolved_account_id(
+            resolved_account_id=resolved_account_id,
+            was_auto_selected=was_auto_selected,
+        )
+        self.show_positions(positions)
 
     def show_positions(self, positions: list[TBankPortfolioPosition]) -> None:
         rows = [
@@ -3824,16 +3986,50 @@ class MainWindow(QMainWindow):
     def load_active_orders(self) -> None:
         try:
             token = self._get_token()
-            account_id = self._get_account_id()
+            requested_account_id = self._get_account_id()
         except ValueError as error:
             QMessageBox.warning(self, "Ошибка", str(error))
             return
 
         async def task():
             async with AsyncClient(token) as client:
-                return await get_active_orders(client, account_id)
+                resolved_account_id, was_auto_selected = (
+                    await self._resolve_account_id_for_request(
+                        client=client,
+                        requested_account_id=requested_account_id,
+                    )
+                )
+                orders = await get_active_orders(
+                    client,
+                    resolved_account_id,
+                )
 
-        self._run_async_task("active_orders", task, self.show_active_orders)
+                return (
+                    resolved_account_id,
+                    was_auto_selected,
+                    orders,
+                )
+
+        self._run_async_task(
+            "active_orders",
+            task,
+            self.show_active_orders_for_account,
+        )
+
+    def show_active_orders_for_account(
+        self,
+        result: tuple[
+            str,
+            bool,
+            list[TBankActiveOrder],
+        ],
+    ) -> None:
+        resolved_account_id, was_auto_selected, orders = result
+        self._apply_resolved_account_id(
+            resolved_account_id=resolved_account_id,
+            was_auto_selected=was_auto_selected,
+        )
+        self.show_active_orders(orders)
 
     def show_active_orders(self, orders: list[TBankActiveOrder]) -> None:
         headers = [
