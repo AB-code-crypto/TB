@@ -115,6 +115,28 @@ class CheckableTableWidgetItem(QTableWidgetItem):
         return self.checkState().value < other.checkState().value
 
 
+class NumericTableWidgetItem(QTableWidgetItem):
+    def __init__(
+        self,
+        text: str,
+        sort_value: Decimal | None,
+    ) -> None:
+        super().__init__(text)
+        self.sort_value = sort_value
+
+    def __lt__(self, other) -> bool:
+        if not isinstance(other, NumericTableWidgetItem):
+            return super().__lt__(other)
+
+        if self.sort_value is None:
+            return False
+
+        if other.sort_value is None:
+            return True
+
+        return self.sort_value < other.sort_value
+
+
 class MainWindow(QMainWindow):
     async_task_finished = Signal(str, object)
     async_task_failed = Signal(str, str)
@@ -3816,7 +3838,7 @@ class MainWindow(QMainWindow):
         for row in range(total_count):
             searchable_values = []
 
-            for column in (2, 3, 7, 11):
+            for column in (2, 3, 6, 10):
                 item = self.shares_table.item(row, column)
 
                 if item is not None:
@@ -3864,7 +3886,6 @@ class MainWindow(QMainWindow):
             "name",
             "текущая цена",
             "стоимость лота",
-            "currency",
             "class_code",
             "акций в 1 лоте",
             "шаг цены",
@@ -3904,17 +3925,23 @@ class MainWindow(QMainWindow):
             )
 
             if last_price is None or last_price.price <= 0:
+                current_price_value = None
+                lot_cost_value = None
                 current_price_text = "—"
                 lot_cost_text = "—"
                 price_tooltip = (
                     "Последняя цена по инструменту не получена."
                 )
             else:
+                current_price_value = last_price.price
+                lot_cost_value = (
+                    last_price.price * Decimal(share.lot)
+                )
                 current_price_text = self._format_share_price_value(
-                    last_price.price
+                    current_price_value
                 )
                 lot_cost_text = self._format_share_price_value(
-                    last_price.price * Decimal(share.lot)
+                    lot_cost_value
                 )
                 price_time_text = (
                     last_price.time.replace(tzinfo=None).isoformat(
@@ -3933,7 +3960,6 @@ class MainWindow(QMainWindow):
                 share.name,
                 current_price_text,
                 lot_cost_text,
-                share.currency,
                 share.class_code,
                 share.lot,
                 share.min_price_increment,
@@ -3947,12 +3973,28 @@ class MainWindow(QMainWindow):
                 share.liquidity_flag,
                 ", ".join(share.required_tests),
             ]
+            numeric_sort_values = {
+                4: current_price_value,
+                5: lot_cost_value,
+                7: Decimal(share.lot),
+                8: share.min_price_increment,
+            }
 
             for column_index, value in enumerate(
                 row_values,
                 start=1,
             ):
-                item = self._make_read_only_item(value)
+                if column_index in numeric_sort_values:
+                    item = NumericTableWidgetItem(
+                        text=str(value),
+                        sort_value=numeric_sort_values[column_index],
+                    )
+                    item.setFlags(
+                        item.flags()
+                        & ~Qt.ItemFlag.ItemIsEditable
+                    )
+                else:
+                    item = self._make_read_only_item(value)
 
                 if column_index in (4, 5):
                     item.setToolTip(price_tooltip)
@@ -3967,44 +4009,29 @@ class MainWindow(QMainWindow):
             QHeaderView.ResizeMode.ResizeToContents
         )
         self.shares_table.verticalHeader().setVisible(False)
-        self.shares_table.setColumnHidden(
-            1,
-            True,
-        )
-        self.shares_table.setColumnHidden(
-            7,
-            True,
-        )
-        self.shares_table.setColumnHidden(
-            10,
-            True,
-        )
-        self.shares_table.setColumnHidden(
-            11,
-            True,
-        )
-        self.shares_table.setColumnHidden(
-            12,
-            True,
-        )
-        self.shares_table.setColumnHidden(
-            13,
-            True,
-        )
-        self.shares_table.setColumnHidden(
-            14,
-            True,
-        )
-        self.shares_table.setColumnHidden(
-            18,
-            True,
-        )
+
+        for hidden_column in (
+            1,   # внутренний номер строки
+            6,   # class_code
+            9,   # real_exchange
+            10,  # uid
+            11,  # api
+            12,  # buy
+            13,  # sell
+            17,  # required_tests
+        ):
+            self.shares_table.setColumnHidden(
+                hidden_column,
+                True,
+            )
+
         self.shares_table.setSortingEnabled(True)
         self.shares_table.sortItems(
             0,
             Qt.SortOrder.DescendingOrder,
         )
         self.apply_shares_search_filter()
+
 
     def apply_checked_shares_selection(self) -> None:
         if self.robot_is_running:
@@ -4019,7 +4046,7 @@ class MainWindow(QMainWindow):
 
         for row in range(self.shares_table.rowCount()):
             checkbox_item = self.shares_table.item(row, 0)
-            uid_item = self.shares_table.item(row, 11)
+            uid_item = self.shares_table.item(row, 10)
 
             if checkbox_item is None or uid_item is None:
                 continue
@@ -4063,7 +4090,7 @@ class MainWindow(QMainWindow):
         row: int,
         column: int,
     ) -> None:
-        uid_item = self.shares_table.item(row, 11)
+        uid_item = self.shares_table.item(row, 10)
 
         if uid_item is None:
             return

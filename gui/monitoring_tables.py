@@ -192,7 +192,6 @@ def fill_growth_current_table(table: QTableWidget) -> None:
         "Сигнал",
         "Текущая цена",
         "Open свечи",
-        "Интервал",
         "Свеча UTC",
         "Цена UTC",
         "Цикл",
@@ -229,17 +228,28 @@ def fill_growth_current_table(table: QTableWidget) -> None:
             5,
             state.candle_open_price,
         )
-        _set_table_value(table, row_index, 6, state.interval_label)
-        _set_table_value(table, row_index, 7, state.candle_time_utc)
+        _set_table_value(
+            table,
+            row_index,
+            6,
+            state.candle_time_utc,
+        )
+        _set_table_value(
+            table,
+            row_index,
+            7,
+            state.last_price_time_utc,
+        )
         _set_table_value(
             table,
             row_index,
             8,
-            state.last_price_time_utc,
+            state.scan_cycle_id,
         )
-        _set_table_value(table, row_index, 9, state.scan_cycle_id)
 
     _fit_table_columns(table)
+
+
 
 
 def fill_growth_signals_table(table: QTableWidget) -> None:
@@ -249,6 +259,7 @@ def fill_growth_signals_table(table: QTableWidget) -> None:
         "ID",
         "Обнаружен UTC",
         "Инструмент",
+        "Название",
         "Свеча UTC",
         "Рост",
         "Порог",
@@ -279,35 +290,48 @@ def fill_growth_signals_table(table: QTableWidget) -> None:
             table,
             row_index,
             3,
-            signal.candle_time_utc,
+            signal.name,
         )
         _set_table_value(
             table,
             row_index,
             4,
-            f"{signal.growth_percent:.4f}%",
+            signal.candle_time_utc,
         )
         _set_table_value(
             table,
             row_index,
             5,
-            f"{signal.threshold_percent:.4f}%",
+            f"{signal.growth_percent:.4f}%",
         )
         _set_table_value(
             table,
             row_index,
             6,
-            signal.current_price,
+            f"{signal.threshold_percent:.4f}%",
         )
         _set_table_value(
             table,
             row_index,
             7,
+            signal.current_price,
+        )
+        _set_table_value(
+            table,
+            row_index,
+            8,
             signal.candle_open_price,
         )
-        _set_table_value(table, row_index, 8, signal.status)
+        _set_table_value(
+            table,
+            row_index,
+            9,
+            signal.status,
+        )
 
     _fit_table_columns(table)
+
+
 
 
 def fill_buy_intents_table(table: QTableWidget) -> None:
