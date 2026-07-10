@@ -170,8 +170,8 @@ def save_buy_intent(
     if current_price <= 0:
         raise ValueError("current_price должен быть больше 0.")
 
-    if requested_amount <= 0:
-        raise ValueError("requested_amount должен быть больше 0.")
+    if requested_amount < 0:
+        raise ValueError("requested_amount не может быть меньше 0.")
 
     if lot <= 0:
         raise ValueError("lot должен быть больше 0.")

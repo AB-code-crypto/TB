@@ -80,25 +80,21 @@ def _format_percent(value: Decimal) -> str:
     return f"{value:.4f}%"
 
 
-SUPPORTED_TRADE_CURRENCIES = ("RUB", "USD", "EUR")
 
-
-def _get_available_money_by_currency(
+def _get_available_rub(
     balance: PortfolioBalance,
-) -> dict[str, Decimal]:
-    return {
-        money.currency.upper(): money.available
-        for money in balance.money
-    }
+) -> Decimal:
+    for money in balance.money:
+        if money.currency.upper() == MOEX_SHARE_CURRENCY:
+            return money.available
+
+    return Decimal("0")
 
 
-def _estimate_robot_used_money_by_currency(
+def _estimate_robot_used_rub(
     account_id: str,
-) -> dict[str, Decimal]:
-    totals: dict[str, Decimal] = {
-        currency: Decimal("0")
-        for currency in SUPPORTED_TRADE_CURRENCIES
-    }
+) -> Decimal:
+    total = Decimal("0")
 
     for position in list_robot_positions(account_id=account_id):
         if position.robot_lots <= 0:
@@ -107,14 +103,17 @@ def _estimate_robot_used_money_by_currency(
         if position.avg_price <= 0:
             continue
 
-        currency = position.currency.upper()
-        totals.setdefault(currency, Decimal("0"))
-        totals[currency] += (
+        if position.currency.upper() != MOEX_SHARE_CURRENCY:
+            continue
+
+        total += (
             position.avg_price
             * Decimal(position.robot_lots * position.lot)
         )
 
-    return totals
+    return total
+
+
 
 
 def _calculate_position_growth_percent(
@@ -355,8 +354,8 @@ async def _execute_entry_orders(
     account_id: str,
     shares_by_uid: dict[str, TBankShare],
     new_signal_records: list[tuple[int, GrowthScanResult]],
-    requested_amounts_by_currency: dict[str, Decimal],
-    bot_money_limits_by_currency: dict[str, Decimal],
+    requested_amount: Decimal,
+    bot_money_limit: Decimal,
     allow_buy: bool,
     blocked_entry_uids: set[str],
 ) -> tuple[list[str], bool]:
@@ -381,19 +380,13 @@ async def _execute_entry_orders(
         position.instrument_uid
         for position in open_positions
     }
-    used_money_by_currency = _estimate_robot_used_money_by_currency(
-        account_id=account_id
+    remaining_bot_limit = (
+        bot_money_limit
+        - _estimate_robot_used_rub(account_id=account_id)
     )
-    remaining_limits_by_currency = {
-        currency: (
-            bot_money_limits_by_currency[currency]
-            - used_money_by_currency.get(currency, Decimal("0"))
-        )
-        for currency in bot_money_limits_by_currency
-    }
 
     balance = await get_balance(client, account_id)
-    available_money_by_currency = _get_available_money_by_currency(balance)
+    available_rub = _get_available_rub(balance)
 
     for signal_id, signal in new_signal_records:
         if signal.instrument_uid in blocked_entry_uids:
@@ -420,54 +413,39 @@ async def _execute_entry_orders(
             )
             continue
 
-        currency = signal.currency.upper()
-
-        if currency not in requested_amounts_by_currency:
+        if signal.currency.upper() != MOEX_SHARE_CURRENCY:
             log_lines.append(
-                "Автопокупка пропущена: валюта не поддерживается настройками: "
-                f"{signal.ticker}_{signal.class_code}, currency={currency}."
+                "Автопокупка пропущена: робот торгует только RUB-акциями MOEX: "
+                f"{signal.ticker}_{signal.class_code}, "
+                f"currency={signal.currency}."
             )
             continue
-
-        requested_amount = requested_amounts_by_currency[currency]
-        configured_bot_limit = bot_money_limits_by_currency.get(
-            currency,
-            Decimal("0"),
-        )
-        remaining_bot_limit = remaining_limits_by_currency.get(
-            currency,
-            Decimal("0"),
-        )
-        available_money = available_money_by_currency.get(
-            currency,
-            Decimal("0"),
-        )
 
         if requested_amount <= 0:
             log_lines.append(
-                "Автопокупка пропущена: сумма автопокупки равна 0: "
-                f"{signal.ticker}_{signal.class_code}, currency={currency}."
+                "Автопокупка пропущена: сумма автопокупки RUB равна 0: "
+                f"{signal.ticker}_{signal.class_code}."
             )
             continue
 
-        if configured_bot_limit <= 0:
+        if bot_money_limit <= 0:
             log_lines.append(
-                "Автопокупка пропущена: лимит денег бота равен 0: "
-                f"{signal.ticker}_{signal.class_code}, currency={currency}."
+                "Автопокупка пропущена: лимит денег бота RUB равен 0: "
+                f"{signal.ticker}_{signal.class_code}."
             )
             continue
 
         if remaining_bot_limit <= 0:
             log_lines.append(
-                "Автопокупка пропущена: лимит денег бота в валюте уже занят: "
-                f"{signal.ticker}_{signal.class_code}, currency={currency}."
+                "Автопокупка пропущена: лимит денег бота RUB уже занят: "
+                f"{signal.ticker}_{signal.class_code}."
             )
             continue
 
-        if available_money <= 0:
+        if available_rub <= 0:
             log_lines.append(
-                "Автопокупка пропущена: свободных денег в валюте нет: "
-                f"{signal.ticker}_{signal.class_code}, currency={currency}."
+                "Автопокупка пропущена: свободных рублей нет: "
+                f"{signal.ticker}_{signal.class_code}."
             )
             continue
 
@@ -486,8 +464,8 @@ async def _execute_entry_orders(
             log_lines.append(
                 "Автопокупка пропущена: суммы одной покупки не хватает на 1 лот: "
                 f"{signal.ticker}_{signal.class_code}, "
-                f"amount={requested_amount} {currency}, "
-                f"one_lot={one_lot_amount} {currency}."
+                f"amount={requested_amount} RUB, "
+                f"one_lot={one_lot_amount} RUB."
             )
             continue
 
@@ -497,17 +475,17 @@ async def _execute_entry_orders(
             log_lines.append(
                 "Автопокупка пропущена: недостаточно лимита денег бота: "
                 f"{signal.ticker}_{signal.class_code}, "
-                f"need={estimated_amount:.2f} {currency}, "
-                f"remaining={remaining_bot_limit:.2f} {currency}."
+                f"need={estimated_amount:.2f} RUB, "
+                f"remaining={remaining_bot_limit:.2f} RUB."
             )
             continue
 
-        if estimated_amount > available_money:
+        if estimated_amount > available_rub:
             log_lines.append(
-                "Автопокупка пропущена: недостаточно свободных денег: "
+                "Автопокупка пропущена: недостаточно свободных рублей: "
                 f"{signal.ticker}_{signal.class_code}, "
-                f"need={estimated_amount:.2f} {currency}, "
-                f"available={available_money:.2f} {currency}."
+                f"need={estimated_amount:.2f} RUB, "
+                f"available={available_rub:.2f} RUB."
             )
             continue
 
@@ -526,7 +504,7 @@ async def _execute_entry_orders(
                 f"{signal.ticker}_{signal.class_code}, "
                 f"signal_id={signal_id}, "
                 f"лотов={quantity_lots}, "
-                f"примерная сумма={estimated_amount:.2f} {currency}, "
+                f"примерная сумма={estimated_amount:.2f} RUB, "
                 f"lot={signal.lot}, "
                 f"current_price={signal.current_price}, "
                 f"error={type(error).__name__}: {error}"
@@ -540,10 +518,8 @@ async def _execute_entry_orders(
         )
 
         if order_report.result.lots_executed > 0:
-            available_money_by_currency[currency] = available_money - spent_amount
-            remaining_limits_by_currency[currency] = (
-                remaining_bot_limit - spent_amount
-            )
+            available_rub -= spent_amount
+            remaining_bot_limit -= spent_amount
             open_robot_uids.add(signal.instrument_uid)
             portfolio_changed = True
 
@@ -552,13 +528,15 @@ async def _execute_entry_orders(
             f"{signal.ticker}_{signal.class_code}, "
             f"signal_id={signal_id}, "
             f"лотов={quantity_lots}, "
-            f"примерная сумма={estimated_amount:.2f} {currency}, "
+            f"примерная сумма={estimated_amount:.2f} RUB, "
             f"broker_order_id={order_report.result.broker_order_id}, "
             f"status={order_report.result.execution_report_status}, "
             f"исполнено={order_report.result.lots_executed}."
         )
 
     return log_lines, portfolio_changed
+
+
 
 
 BULK_CLOSE_ORDER_SOURCE = "BULK_CLOSE_BUTTON"
@@ -778,22 +756,16 @@ async def execute_auto_trading_cycle(
 
     allow_buy = settings["allow_buy"] == "1"
     allow_sell = settings["allow_sell"] == "1"
-    requested_amounts_by_currency = {
-        currency: _parse_non_negative_decimal_setting(
-            settings=settings,
-            key=f"auto_buy_amount_{currency.lower()}",
-            label=f"Сумма автопокупки {currency}",
-        )
-        for currency in SUPPORTED_TRADE_CURRENCIES
-    }
-    bot_money_limits_by_currency = {
-        currency: _parse_non_negative_decimal_setting(
-            settings=settings,
-            key=f"bot_money_limit_{currency.lower()}",
-            label=f"Лимит денег бота {currency}",
-        )
-        for currency in SUPPORTED_TRADE_CURRENCIES
-    }
+    requested_amount = _parse_non_negative_decimal_setting(
+        settings=settings,
+        key="auto_buy_amount_rub",
+        label="Сумма автопокупки RUB",
+    )
+    bot_money_limit = _parse_non_negative_decimal_setting(
+        settings=settings,
+        key="bot_money_limit_rub",
+        label="Лимит денег бота RUB",
+    )
     take_profit_percent = _parse_positive_decimal_setting(
         settings=settings,
         key="take_profit_percent",
@@ -841,8 +813,8 @@ async def execute_auto_trading_cycle(
             account_id=account_id,
             shares_by_uid=shares_by_uid,
             new_signal_records=new_signal_records,
-            requested_amounts_by_currency=requested_amounts_by_currency,
-            bot_money_limits_by_currency=bot_money_limits_by_currency,
+            requested_amount=requested_amount,
+            bot_money_limit=bot_money_limit,
             allow_buy=allow_buy,
             blocked_entry_uids=exit_result.exited_instrument_uids,
         )

@@ -24,32 +24,13 @@ from bd.price_snapshot import delete_price_snapshots_older_than
 from bd.settings_storage import load_app_settings
 from bot.growth_scanner import GrowthScanReport, GrowthScanResult, scan_growth_once
 from bot.auto_trade_executor import execute_auto_trading_cycle
+from tbank.shares import MOEX_SHARE_CURRENCY
 
 
 LogCallback = Callable[[str], None]
 StopCallback = Callable[[], bool]
 
-TRADE_CURRENCIES = ("RUB", "USD", "EUR")
 
-
-def _parse_positive_decimal_setting(
-    settings: dict[str, str],
-    key: str,
-    label: str,
-) -> Decimal:
-    raw_value = settings[key].strip().replace(",", ".").replace(" ", "")
-
-    try:
-        value = Decimal(raw_value)
-    except InvalidOperation as error:
-        raise ValueError(
-            f"{label}: некорректное число в настройках: {settings[key]!r}"
-        ) from error
-
-    if value <= 0:
-        raise ValueError(f"{label} должен быть больше 0.")
-
-    return value
 
 
 def _get_scan_interval_seconds() -> int:
@@ -134,43 +115,29 @@ def save_report_signals(
 def save_dry_run_buy_intents(
     new_signal_records: list[tuple[int, GrowthScanResult]],
     report: GrowthScanReport,
-) -> tuple[int, int, dict[str, Decimal]]:
-    empty_amounts = {
-        currency: Decimal("0")
-        for currency in TRADE_CURRENCIES
-    }
-
+) -> tuple[int, int, Decimal]:
     if not new_signal_records:
-        return 0, 0, empty_amounts
+        return 0, 0, Decimal("0")
 
     settings = load_app_settings()
 
     allow_buy = settings["allow_buy"] == "1"
-    requested_amounts_by_currency = {
-        currency: _parse_non_negative_decimal_setting(
-            settings=settings,
-            key=f"auto_buy_amount_{currency.lower()}",
-            label=f"Сумма автопокупки {currency}",
-        )
-        for currency in TRADE_CURRENCIES
-    }
-    remaining_limits_by_currency = {
-        currency: _parse_non_negative_decimal_setting(
-            settings=settings,
-            key=f"bot_money_limit_{currency.lower()}",
-            label=f"Лимит денег для бота {currency}",
-        )
-        for currency in TRADE_CURRENCIES
-    }
+    requested_amount = _parse_non_negative_decimal_setting(
+        settings=settings,
+        key="auto_buy_amount_rub",
+        label="Сумма автопокупки RUB",
+    )
+    remaining_limit = _parse_non_negative_decimal_setting(
+        settings=settings,
+        key="bot_money_limit_rub",
+        label="Лимит денег для бота RUB",
+    )
 
     created_at_utc = datetime.now(timezone.utc)
 
     planned_count = 0
     skipped_count = 0
-    planned_amounts = {
-        currency: Decimal("0")
-        for currency in TRADE_CURRENCIES
-    }
+    planned_amount = Decimal("0")
 
     for signal_id, signal in new_signal_records:
         status = BUY_INTENT_STATUS_SKIPPED
@@ -179,27 +146,28 @@ def save_dry_run_buy_intents(
         quantity_shares = 0
         estimated_order_amount = Decimal("0")
         currency = signal.currency.upper()
-        requested_amount = requested_amounts_by_currency.get(
-            currency,
-            Decimal("0"),
+        signal_requested_amount = (
+            requested_amount
+            if currency == MOEX_SHARE_CURRENCY
+            else Decimal("0")
         )
 
         if not allow_buy:
             reason = "Покупки запрещены настройкой allow_buy."
-        elif currency not in requested_amounts_by_currency:
-            reason = f"Валюта инструмента не поддерживается: {currency}."
+        elif currency != MOEX_SHARE_CURRENCY:
+            reason = (
+                "Робот торгует только RUB-акциями MOEX: "
+                f"currency={currency}."
+            )
         elif requested_amount <= 0:
             reason = (
-                f"Сумма автопокупки {currency} равна 0; "
-                "покупки в этой валюте отключены."
+                "Сумма автопокупки RUB равна 0; "
+                "покупки отключены."
             )
-        elif remaining_limits_by_currency.get(
-            currency,
-            Decimal("0"),
-        ) <= 0:
+        elif remaining_limit <= 0:
             reason = (
-                f"Лимит денег бота {currency} равен 0; "
-                "покупки в этой валюте отключены."
+                "Лимит денег бота RUB равен 0 или уже исчерпан; "
+                "покупки отключены."
             )
         else:
             one_lot_amount = signal.current_price * Decimal(signal.lot)
@@ -212,21 +180,20 @@ def save_dry_run_buy_intents(
                 if quantity_lots <= 0:
                     reason = (
                         "Сумма одной покупки меньше стоимости одного лота: "
-                        f"amount={requested_amount} {currency}, "
-                        f"one_lot={one_lot_amount} {currency}."
+                        f"amount={requested_amount} RUB, "
+                        f"one_lot={one_lot_amount} RUB."
                     )
                 else:
                     quantity_shares = quantity_lots * signal.lot
                     estimated_order_amount = (
                         signal.current_price * Decimal(quantity_shares)
                     )
-                    remaining_limit = remaining_limits_by_currency[currency]
 
                     if estimated_order_amount > remaining_limit:
                         reason = (
                             "Недостаточно лимита денег бота в текущем цикле: "
-                            f"need={estimated_order_amount} {currency}, "
-                            f"remaining={remaining_limit} {currency}."
+                            f"need={estimated_order_amount} RUB, "
+                            f"remaining={remaining_limit} RUB."
                         )
                     else:
                         status = BUY_INTENT_STATUS_PLANNED
@@ -248,7 +215,7 @@ def save_dry_run_buy_intents(
             current_price=signal.current_price,
             growth_percent=signal.growth_percent,
             threshold_percent=report.growth_threshold_percent,
-            requested_amount=requested_amount,
+            requested_amount=signal_requested_amount,
             lot=signal.lot,
             quantity_lots=quantity_lots,
             quantity_shares=quantity_shares,
@@ -262,40 +229,37 @@ def save_dry_run_buy_intents(
 
         if status == BUY_INTENT_STATUS_PLANNED:
             planned_count += 1
-            planned_amounts[currency] += estimated_order_amount
-            remaining_limits_by_currency[currency] -= estimated_order_amount
+            planned_amount += estimated_order_amount
+            remaining_limit -= estimated_order_amount
         elif status == BUY_INTENT_STATUS_SKIPPED:
             skipped_count += 1
         else:
             raise RuntimeError(f"Неизвестный статус buy_intent: {status}")
 
-    return planned_count, skipped_count, planned_amounts
+    return planned_count, skipped_count, planned_amount
+
+
 
 
 def build_buy_intent_log_lines(
     planned_count: int,
     skipped_count: int,
-    planned_amounts: dict[str, Decimal],
+    planned_amount: Decimal,
 ) -> list[str]:
     if planned_count == 0 and skipped_count == 0:
         return []
-
-    amount_parts = [
-        f"{currency}={amount:.2f}"
-        for currency, amount in planned_amounts.items()
-        if amount != 0
-    ]
-    amounts_text = ", ".join(amount_parts) if amount_parts else "нет"
 
     return [
         (
             "Dry-run автопокупок: "
             f"планов={planned_count}, "
             f"пропущено={skipped_count}, "
-            f"плановые суммы: {amounts_text}."
+            f"плановая сумма={planned_amount:.2f} RUB."
         ),
         "Реальные заявки брокеру не отправлялись.",
     ]
+
+
 
 
 def save_success_cycle(
@@ -503,7 +467,7 @@ async def run_growth_monitor_service(
                 trade_log_lines = build_buy_intent_log_lines(
                     planned_count=planned_buy_intents_count,
                     skipped_count=skipped_buy_intents_count,
-                    planned_amounts=planned_buy_intents_amount,
+                    planned_amount=planned_buy_intents_amount,
                 )
         except Exception as error:
             cycle_finished_at = datetime.now(timezone.utc)

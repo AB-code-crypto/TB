@@ -1,4 +1,3 @@
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
 
@@ -6,28 +5,6 @@ from bd.database import get_connection
 
 
 RESULT_CURRENCIES = ("RUB", "USD", "EUR")
-
-
-@dataclass(frozen=True)
-class RobotRealizedResult:
-    id: int
-    closed_at_utc: datetime
-    account_id: str
-    robot_order_id: int | None
-    instrument_uid: str
-    ticker: str
-    class_code: str
-    name: str
-    currency: str
-    lot: int
-    executed_lots: int
-    executed_shares: int
-    average_buy_price: Decimal
-    sell_price: Decimal
-    buy_amount: Decimal
-    sell_amount: Decimal
-    gross_result: Decimal
-    source: str
 
 
 def init_robot_realized_result_storage() -> None:

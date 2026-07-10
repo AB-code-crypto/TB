@@ -19,7 +19,6 @@ from bot.growth_candle_intervals import (
 )
 from tbank.candles import get_candles
 from tbank.last_prices import (
-    TBankLastPrice,
     get_last_prices_batched,
     map_last_prices_by_instrument_uid,
 )
