@@ -93,6 +93,18 @@ def _estimate_robot_used_money_by_currency(
     return totals
 
 
+def _calculate_position_growth_percent(
+    current_price: Decimal,
+    avg_price: Decimal,
+) -> Decimal:
+    if avg_price <= 0:
+        raise ValueError("avg_price должен быть больше 0.")
+
+    return (
+        current_price / avg_price - Decimal("1")
+    ) * Decimal("100")
+
+
 async def _send_robot_market_order(
     client,
     account_id: str,

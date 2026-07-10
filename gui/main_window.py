@@ -73,7 +73,12 @@ from tbank.balance import PortfolioBalance, get_balance
 from tbank.positions import TBankPortfolioPosition, get_portfolio_positions
 from tbank.order_book import get_best_order_book_prices
 from tbank.order_execution import TBankPostOrderResult, cancel_order, post_limit_order, post_market_order
-from tbank.last_prices import get_last_price
+from tbank.last_prices import (
+    TBankLastPrice,
+    get_last_price,
+    get_last_prices_batched,
+    map_last_prices_by_instrument_uid,
+)
 from tbank.shares import TBankShare, get_shares
 
 
@@ -156,6 +161,7 @@ class MainWindow(QMainWindow):
 
         self.all_shares: list[TBankShare] = []
         self.available_shares: list[TBankShare] = []
+        self.available_share_prices_by_uid: dict[str, TBankLastPrice] = {}
         saved_selected_shares = load_selected_shares()
         self.selected_shares_by_uid: dict[str, TBankShare] = {
             share.uid: share
@@ -3856,17 +3862,57 @@ class MainWindow(QMainWindow):
 
         client_is_qualified = self.qualified_investor_checkbox.isChecked()
         only_liquid_shares = self.only_liquid_shares_checkbox.isChecked()
+        self.available_share_prices_by_uid = {}
         self.refresh_shares_filters_label()
 
         async def task():
             async with AsyncClient(token) as client:
-                return await get_shares(client)
+                shares = await asyncio.wait_for(
+                    get_shares(client),
+                    timeout=40,
+                )
+                price_candidate_uids = [
+                    share.uid
+                    for share in shares
+                    if (
+                        share.currency.upper()
+                        in SHARE_FILTER_CURRENCIES
+                        and share.real_exchange
+                        in SHARE_FILTER_REAL_EXCHANGES
+                        and share.api_trade_available_flag
+                        and share.buy_available_flag
+                        and share.sell_available_flag
+                        and not share.blocked_tca_flag
+                    )
+                ]
+
+                if not price_candidate_uids:
+                    return shares, [], ""
+
+                try:
+                    prices = await asyncio.wait_for(
+                        get_last_prices_batched(
+                            client=client,
+                            instrument_ids=price_candidate_uids,
+                            batch_size=100,
+                        ),
+                        timeout=60,
+                    )
+                    price_error_text = ""
+                except Exception as error:
+                    prices = []
+                    clean_error_text = str(error).strip() or repr(error)
+                    price_error_text = (
+                        f"{type(error).__name__}: {clean_error_text}"
+                    )
+
+                return shares, prices, price_error_text
 
         self._run_async_task(
             "shares",
             task,
-            lambda shares, qualified=client_is_qualified, liquid=only_liquid_shares: self.show_shares(
-                shares,
+            lambda result, qualified=client_is_qualified, liquid=only_liquid_shares: self.show_shares(
+                result,
                 qualified,
                 liquid,
             ),
@@ -3928,11 +3974,19 @@ class MainWindow(QMainWindow):
 
     def show_shares(
         self,
-        shares: list[TBankShare],
+        result: tuple[
+            list[TBankShare],
+            list[TBankLastPrice],
+            str,
+        ],
         client_is_qualified: bool,
         only_liquid_shares: bool,
     ) -> None:
+        shares, prices, price_error_text = result
         self.all_shares = shares
+        self.available_share_prices_by_uid = (
+            map_last_prices_by_instrument_uid(prices)
+        )
         self._refresh_class_code_filter_options_from_shares(
             shares=shares,
             client_is_qualified=client_is_qualified,
@@ -3951,6 +4005,11 @@ class MainWindow(QMainWindow):
             for share in shares
             if share.for_qual_investor_flag
         )
+        available_prices_count = sum(
+            1
+            for share in self.available_shares
+            if share.uid in self.available_share_prices_by_uid
+        )
 
         self._log(f"Клиент квал: {'да' if client_is_qualified else 'нет'}")
         self._log(
@@ -3968,6 +4027,17 @@ class MainWindow(QMainWindow):
         self._log(
             f"Рабочих акций после фильтра: {len(self.available_shares)}"
         )
+        self._log(
+            "Последние цены получены: "
+            f"{available_prices_count} из "
+            f"{len(self.available_shares)} доступных акций."
+        )
+
+        if price_error_text:
+            self._log(
+                "Справочник акций загружен, но последние цены "
+                f"получить не удалось: {price_error_text}"
+            )
 
         self._sync_selected_shares_with_available()
         self.tabs.setCurrentWidget(self.shares_tab_widget)
@@ -3995,7 +4065,7 @@ class MainWindow(QMainWindow):
         for row in range(total_count):
             searchable_values = []
 
-            for column in (2, 3, 4, 9):
+            for column in (2, 3, 7, 11):
                 item = self.shares_table.item(row, column)
 
                 if item is not None:
@@ -4022,6 +4092,17 @@ class MainWindow(QMainWindow):
                 f"отмечено: {checked_count}"
             )
 
+    def _format_share_price_value(
+        self,
+        value: Decimal,
+    ) -> str:
+        text = format(value, "f")
+
+        if "." in text:
+            text = text.rstrip("0").rstrip(".")
+
+        return text or "0"
+
     def refresh_available_shares_table(self) -> None:
         self.shares_table.setSortingEnabled(False)
 
@@ -4030,10 +4111,12 @@ class MainWindow(QMainWindow):
             "#",
             "ticker",
             "name",
+            "текущая цена",
+            "стоимость лота",
+            "currency",
             "class_code",
             "акций в 1 лоте",
             "шаг цены",
-            "currency",
             "real_exchange",
             "uid",
             "api",
@@ -4065,14 +4148,44 @@ class MainWindow(QMainWindow):
 
             self.shares_table.setItem(row_index, 0, checkbox_item)
 
+            last_price = self.available_share_prices_by_uid.get(
+                share.uid
+            )
+
+            if last_price is None or last_price.price <= 0:
+                current_price_text = "—"
+                lot_cost_text = "—"
+                price_tooltip = (
+                    "Последняя цена по инструменту не получена."
+                )
+            else:
+                current_price_text = self._format_share_price_value(
+                    last_price.price
+                )
+                lot_cost_text = self._format_share_price_value(
+                    last_price.price * Decimal(share.lot)
+                )
+                price_time_text = (
+                    last_price.time.replace(tzinfo=None).isoformat(
+                        sep=" ",
+                        timespec="seconds",
+                    )
+                )
+                price_tooltip = (
+                    f"Цена на {price_time_text} UTC; "
+                    f"тип={last_price.last_price_type}"
+                )
+
             row_values = [
                 row_index + 1,
                 share.ticker,
                 share.name,
+                current_price_text,
+                lot_cost_text,
+                share.currency,
                 share.class_code,
                 share.lot,
                 share.min_price_increment,
-                share.currency,
                 share.real_exchange,
                 share.uid,
                 share.api_trade_available_flag,
@@ -4084,28 +4197,62 @@ class MainWindow(QMainWindow):
                 ", ".join(share.required_tests),
             ]
 
-            for column_index, value in enumerate(row_values, start=1):
+            for column_index, value in enumerate(
+                row_values,
+                start=1,
+            ):
+                item = self._make_read_only_item(value)
+
+                if column_index in (4, 5):
+                    item.setToolTip(price_tooltip)
+
                 self.shares_table.setItem(
                     row_index,
                     column_index,
-                    self._make_read_only_item(value),
+                    item,
                 )
 
         self.shares_table.horizontalHeader().setSectionResizeMode(
             QHeaderView.ResizeMode.ResizeToContents
         )
         self.shares_table.verticalHeader().setVisible(False)
-        self.shares_table.setColumnHidden(1, True)   # номер строки больше не нужен в GUI
-        self.shares_table.setColumnHidden(4, True)   # class_code нужен коду, но не нужен клиенту
-        self.shares_table.setColumnHidden(7, True)   # currency нужен коду, но не нужен клиенту
-        self.shares_table.setColumnHidden(8, True)   # real_exchange нужен коду, но не нужен клиенту
-        self.shares_table.setColumnHidden(9, True)   # uid: внутренний идентификатор инструмента
-        self.shares_table.setColumnHidden(10, True)  # api: служебный признак доступности API
-        self.shares_table.setColumnHidden(11, True)  # buy: служебный признак доступности покупки
-        self.shares_table.setColumnHidden(12, True)  # sell: служебный признак доступности продажи
-        self.shares_table.setColumnHidden(16, True)  # required_tests: внутренний список тестов API
+        self.shares_table.setColumnHidden(
+            1,
+            True,
+        )
+        self.shares_table.setColumnHidden(
+            7,
+            True,
+        )
+        self.shares_table.setColumnHidden(
+            10,
+            True,
+        )
+        self.shares_table.setColumnHidden(
+            11,
+            True,
+        )
+        self.shares_table.setColumnHidden(
+            12,
+            True,
+        )
+        self.shares_table.setColumnHidden(
+            13,
+            True,
+        )
+        self.shares_table.setColumnHidden(
+            14,
+            True,
+        )
+        self.shares_table.setColumnHidden(
+            18,
+            True,
+        )
         self.shares_table.setSortingEnabled(True)
-        self.shares_table.sortItems(0, Qt.SortOrder.DescendingOrder)
+        self.shares_table.sortItems(
+            0,
+            Qt.SortOrder.DescendingOrder,
+        )
         self.apply_shares_search_filter()
 
     def apply_checked_shares_selection(self) -> None:
@@ -4116,19 +4263,25 @@ class MainWindow(QMainWindow):
                 "Рабочие акции нельзя менять во время работы робота.",
             )
             return
+
         selected_shares: dict[str, TBankShare] = {}
 
         for row in range(self.shares_table.rowCount()):
             checkbox_item = self.shares_table.item(row, 0)
-            uid_item = self.shares_table.item(row, 9)
+            uid_item = self.shares_table.item(row, 11)
 
             if checkbox_item is None or uid_item is None:
                 continue
 
-            if checkbox_item.checkState() != Qt.CheckState.Checked:
+            if (
+                checkbox_item.checkState()
+                != Qt.CheckState.Checked
+            ):
                 continue
 
-            share = self._find_available_share_by_uid(uid_item.text())
+            share = self._find_available_share_by_uid(
+                uid_item.text()
+            )
 
             if share is None:
                 continue
@@ -4139,11 +4292,13 @@ class MainWindow(QMainWindow):
         self.refresh_selected_shares_table()
 
         self._log(
-            f"Рабочий список акций полностью обновлён. "
+            "Рабочий список акций полностью обновлён. "
             f"Выбрано: {len(self.selected_shares_by_uid)}"
         )
 
-        self.tabs.setCurrentWidget(self.selected_shares_tab_widget)
+        self.tabs.setCurrentWidget(
+            self.selected_shares_tab_widget
+        )
 
     def _find_available_share_by_uid(self, uid: str) -> TBankShare | None:
         for share in self.available_shares:
@@ -4152,8 +4307,12 @@ class MainWindow(QMainWindow):
 
         return None
 
-    def add_selected_share_from_available_table(self, row: int, column: int) -> None:
-        uid_item = self.shares_table.item(row, 9)
+    def add_selected_share_from_available_table(
+        self,
+        row: int,
+        column: int,
+    ) -> None:
+        uid_item = self.shares_table.item(row, 11)
 
         if uid_item is None:
             return
@@ -4166,16 +4325,26 @@ class MainWindow(QMainWindow):
             return
 
         if uid in self.selected_shares_by_uid:
-            self._log(f"Акция уже есть в рабочем списке: {share.ticker}")
+            self._log(
+                f"Акция уже есть в рабочем списке: {share.ticker}"
+            )
             return
 
         self.selected_shares_by_uid[uid] = share
         self.refresh_selected_shares_table()
 
-        self._log(f"Акция добавлена в рабочий список: {share.ticker} / {share.name}")
-        self._log(f"Всего рабочих акций выбрано: {len(self.selected_shares_by_uid)}")
+        self._log(
+            "Акция добавлена в рабочий список: "
+            f"{share.ticker} / {share.name}"
+        )
+        self._log(
+            "Всего рабочих акций выбрано: "
+            f"{len(self.selected_shares_by_uid)}"
+        )
 
-        self.tabs.setCurrentWidget(self.selected_shares_tab_widget)
+        self.tabs.setCurrentWidget(
+            self.selected_shares_tab_widget
+        )
 
     def remove_selected_share_from_table(self, row: int, column: int) -> None:
         uid_item = self.selected_shares_table.item(row, 8)
