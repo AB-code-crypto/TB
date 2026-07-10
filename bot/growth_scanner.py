@@ -23,7 +23,10 @@ from tbank.last_prices import (
     get_last_prices_batched,
     map_last_prices_by_instrument_uid,
 )
-from tbank.shares import TBankShare
+from tbank.shares import (
+    MOEX_REAL_EXCHANGE,
+    TBankShare,
+)
 
 
 BATCH_SIZE = 100
@@ -158,7 +161,11 @@ async def _get_growth_base_candle(
 
 async def scan_growth_once() -> GrowthScanReport:
     settings = load_app_settings()
-    selected_shares = load_selected_shares()
+    selected_shares = [
+        share
+        for share in load_selected_shares()
+        if share.real_exchange == MOEX_REAL_EXCHANGE
+    ]
 
     token = settings["token"]
 

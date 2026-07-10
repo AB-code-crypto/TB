@@ -83,7 +83,11 @@ from tbank.last_prices import (
     get_last_prices_batched,
     map_last_prices_by_instrument_uid,
 )
-from tbank.shares import TBankShare, get_shares
+from tbank.shares import (
+    MOEX_REAL_EXCHANGE,
+    TBankShare,
+    get_shares,
+)
 
 
 CANDLE_INTERVALS: dict[str, int] = {
@@ -115,10 +119,6 @@ GROWTH_CANDLE_INTERVALS: dict[str, int] = {
 
 
 SHARE_FILTER_CURRENCIES = ("RUB", "USD", "EUR")
-SHARE_FILTER_REAL_EXCHANGES: dict[str, str] = {
-    "REAL_EXCHANGE_MOEX": "MOEX",
-    "REAL_EXCHANGE_RTS": "СПБ / RTS",
-}
 
 
 class CheckableTableWidgetItem(QTableWidgetItem):
@@ -166,7 +166,11 @@ class MainWindow(QMainWindow):
         self.all_shares: list[TBankShare] = []
         self.available_shares: list[TBankShare] = []
         self.available_share_prices_by_uid: dict[str, TBankLastPrice] = {}
-        saved_selected_shares = load_selected_shares()
+        saved_selected_shares = [
+            share
+            for share in load_selected_shares()
+            if share.real_exchange == MOEX_REAL_EXCHANGE
+        ]
         self.selected_shares_by_uid: dict[str, TBankShare] = {
             share.uid: share
             for share in saved_selected_shares
@@ -253,14 +257,6 @@ class MainWindow(QMainWindow):
             for currency in SHARE_FILTER_CURRENCIES
         }
         self.share_currency_filter_checkboxes["RUB"].setChecked(True)
-
-        self.share_real_exchange_filter_checkboxes = {
-            exchange: QCheckBox(label)
-            for exchange, label in SHARE_FILTER_REAL_EXCHANGES.items()
-        }
-        self.share_real_exchange_filter_checkboxes[
-            "REAL_EXCHANGE_MOEX"
-        ].setChecked(True)
 
         self.share_class_code_filter_list = QListWidget()
         self.share_class_code_filter_list.setMaximumHeight(82)
@@ -681,17 +677,6 @@ class MainWindow(QMainWindow):
                 )
             )
 
-        for checkbox in self.share_real_exchange_filter_checkboxes.values():
-            checkbox.toggled.connect(
-                lambda checked, current_checkbox=checkbox: (
-                    self._handle_required_filter_checkbox_toggled(
-                        changed_checkbox=current_checkbox,
-                        checkboxes=self.share_real_exchange_filter_checkboxes,
-                        group_label="Площадка",
-                    )
-                )
-            )
-
         self.share_class_code_filter_list.itemChanged.connect(
             self._handle_class_code_filter_item_changed
         )
@@ -700,7 +685,7 @@ class MainWindow(QMainWindow):
         self.clear_selected_shares_button.clicked.connect(self.clear_selected_shares)
         self.update_robot_positions_button.clicked.connect(self.update_robot_positions_from_table)
 
-        share_filters_controls = QGroupBox("Фильтры выбора акций")
+        share_filters_controls = QGroupBox("Фильтры акций Московской биржи")
         share_filters_controls_layout = QGridLayout(
             share_filters_controls
         )
@@ -713,30 +698,22 @@ class MainWindow(QMainWindow):
                 checkbox, 0, column
             )
 
-        share_filters_controls_layout.addWidget(QLabel("Площадка:"), 1, 0)
-        for column, checkbox in enumerate(
-            self.share_real_exchange_filter_checkboxes.values(),
-            start=1,
-        ):
-            share_filters_controls_layout.addWidget(
-                checkbox, 1, column
-            )
-
         share_filters_controls_layout.addWidget(
-            QLabel("Класс торгов:"), 2, 0
+            QLabel("Класс торгов:"), 1, 0
         )
         share_filters_controls_layout.addWidget(
-            self.share_class_code_filter_list, 2, 1, 1, 3
+            self.share_class_code_filter_list, 1, 1, 1, 3
         )
         class_code_hint_label = QLabel(
-            "Дополнительные class_code появятся после первой загрузки акций."
+            "Биржа зафиксирована: Московская биржа. "
+            "class_code формируется из доступных секций MOEX."
         )
         class_code_hint_label.setWordWrap(True)
         share_filters_controls_layout.addWidget(
-            class_code_hint_label, 3, 0, 1, 4
+            class_code_hint_label, 2, 0, 1, 4
         )
         share_filters_controls_layout.addWidget(
-            self.shares_filters_label, 4, 0, 1, 4
+            self.shares_filters_label, 3, 0, 1, 4
         )
 
         strategy_controls = QGroupBox("Настройки стратегии")
@@ -1103,19 +1080,6 @@ class MainWindow(QMainWindow):
             selected_currencies,
         )
 
-        selected_exchanges = {
-            value.strip()
-            for value in settings.get(
-                "share_filter_real_exchanges",
-                "REAL_EXCHANGE_MOEX",
-            ).split(",")
-            if value.strip()
-        } or {'REAL_EXCHANGE_MOEX'}
-        self._set_checkbox_filter_values(
-            self.share_real_exchange_filter_checkboxes,
-            selected_exchanges,
-        )
-
         selected_class_codes = {
             value.strip().upper()
             for value in settings.get(
@@ -1141,16 +1105,13 @@ class MainWindow(QMainWindow):
         self._refresh_robot_summary()
 
     def save_current_state(self) -> None:
-        currencies, real_exchanges, class_codes = (
-            self._get_share_filter_settings()
-        )
+        currencies, class_codes = self._get_share_filter_settings()
         settings = {
             "token": self.token_edit.text().strip(),
             "account_id": self.account_id_edit.text().strip(),
             "client_is_qualified": "1" if self.qualified_investor_checkbox.isChecked() else "0",
             "only_liquid_shares": "1" if self.only_liquid_shares_checkbox.isChecked() else "0",
             "share_filter_currencies": ",".join(sorted(currencies)),
-            "share_filter_real_exchanges": ",".join(sorted(real_exchanges)),
             "share_filter_class_codes": ",".join(sorted(class_codes)),
             "growth_percent": self.growth_percent_edit.text().strip(),
             "growth_candle_interval": self.growth_candle_interval_combo.currentText(),
@@ -1207,10 +1168,6 @@ class MainWindow(QMainWindow):
         self._set_checkbox_filter_values(
             self.share_currency_filter_checkboxes,
             {'RUB'},
-        )
-        self._set_checkbox_filter_values(
-            self.share_real_exchange_filter_checkboxes,
-            {'REAL_EXCHANGE_MOEX'},
         )
         self._set_class_code_filter_options(
             class_codes={'TQBR'},
@@ -1343,25 +1300,19 @@ class MainWindow(QMainWindow):
 
     def _get_share_filter_settings(
         self,
-    ) -> tuple[set[str], set[str], set[str]]:
+    ) -> tuple[set[str], set[str]]:
         currencies = self._get_checkbox_filter_values(
             self.share_currency_filter_checkboxes
-        )
-        real_exchanges = self._get_checkbox_filter_values(
-            self.share_real_exchange_filter_checkboxes
         )
         class_codes = self._get_selected_class_codes()
 
         if not currencies:
             raise ValueError("Выберите хотя бы одну валюту акций.")
 
-        if not real_exchanges:
-            raise ValueError("Выберите хотя бы одну торговую площадку.")
-
         if not class_codes:
             raise ValueError("Выберите хотя бы один class_code.")
 
-        return currencies, real_exchanges, class_codes
+        return currencies, class_codes
 
     def _handle_required_filter_checkbox_toggled(
         self,
@@ -1403,6 +1354,9 @@ class MainWindow(QMainWindow):
         client_is_qualified: bool,
         only_liquid_shares: bool,
     ) -> bool:
+        if share.real_exchange != MOEX_REAL_EXCHANGE:
+            return False
+
         if not share.api_trade_available_flag:
             return False
 
@@ -1430,14 +1384,15 @@ class MainWindow(QMainWindow):
         only_liquid_shares: bool,
     ) -> None:
         selected_codes = self._get_selected_class_codes()
-        supported_exchanges = set(SHARE_FILTER_REAL_EXCHANGES)
+        selected_currencies = self._get_checkbox_filter_values(
+            self.share_currency_filter_checkboxes
+        )
 
         available_codes = {
             share.class_code.strip().upper()
             for share in shares
             if share.class_code.strip()
-            and share.currency.upper() in SHARE_FILTER_CURRENCIES
-            and share.real_exchange in supported_exchanges
+            and share.currency.upper() in selected_currencies
             and self._share_passes_fixed_filters(
                 share=share,
                 client_is_qualified=client_is_qualified,
@@ -1445,12 +1400,12 @@ class MainWindow(QMainWindow):
             )
         }
 
-        available_codes.add("TQBR")
-        available_codes.update(selected_codes)
+        if not available_codes:
+            available_codes = {"TQBR"}
 
         self._set_class_code_filter_options(
             class_codes=available_codes,
-            selected_codes=selected_codes or {"TQBR"},
+            selected_codes=selected_codes.intersection(available_codes),
         )
 
     def _get_shares_filter_text(
@@ -1463,18 +1418,9 @@ class MainWindow(QMainWindow):
                 self.share_currency_filter_checkboxes
             )
         )
-        real_exchanges = sorted(
-            self._get_checkbox_filter_values(
-                self.share_real_exchange_filter_checkboxes
-            )
-        )
         class_codes = sorted(self._get_selected_class_codes())
 
         currency_text = ",".join(currencies) if currencies else "не выбрано"
-        exchange_text = ",".join(
-            SHARE_FILTER_REAL_EXCHANGES.get(exchange, exchange)
-            for exchange in real_exchanges
-        ) if real_exchanges else "не выбрано"
         class_code_text = ",".join(class_codes) if class_codes else "не выбрано"
 
         qual_filter = (
@@ -1489,8 +1435,8 @@ class MainWindow(QMainWindow):
         )
 
         return (
+            "real_exchange=MOEX; "
             f"currency={currency_text}; "
-            f"real_exchange={exchange_text}; "
             f"class_code={class_code_text}; "
             "api_trade=True; "
             "buy=True; "
@@ -1669,7 +1615,6 @@ class MainWindow(QMainWindow):
             self.qualified_investor_checkbox,
             self.only_liquid_shares_checkbox,
             *self.share_currency_filter_checkboxes.values(),
-            *self.share_real_exchange_filter_checkboxes.values(),
             self.share_class_code_filter_list,
             self.growth_percent_edit,
             self.growth_candle_interval_combo,
@@ -2310,6 +2255,11 @@ class MainWindow(QMainWindow):
         client_is_qualified: bool,
         side: str | None = None,
     ) -> None:
+        if share.real_exchange != MOEX_REAL_EXCHANGE:
+            raise ValueError(
+                "Робот работает только с акциями Московской биржи."
+            )
+
         if share.currency.upper() not in {"RUB", "USD", "EUR"}:
             raise ValueError(
                 f"Валюта акции пока не поддерживается: {share.currency}."
@@ -4128,7 +4078,7 @@ class MainWindow(QMainWindow):
                         share.currency.upper()
                         in SHARE_FILTER_CURRENCIES
                         and share.real_exchange
-                        in SHARE_FILTER_REAL_EXCHANGES
+                        == MOEX_REAL_EXCHANGE
                         and share.api_trade_available_flag
                         and share.buy_available_flag
                         and share.sell_available_flag
@@ -4174,16 +4124,11 @@ class MainWindow(QMainWindow):
         client_is_qualified: bool,
         only_liquid_shares: bool,
     ) -> list[TBankShare]:
-        currencies, real_exchanges, class_codes = (
-            self._get_share_filter_settings()
-        )
+        currencies, class_codes = self._get_share_filter_settings()
         filtered_shares: list[TBankShare] = []
 
         for share in shares:
             if share.currency.upper() not in currencies:
-                continue
-
-            if share.real_exchange not in real_exchanges:
                 continue
 
             if share.class_code.strip().upper() not in class_codes:

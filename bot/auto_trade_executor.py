@@ -11,7 +11,10 @@ from bot.growth_scanner import GrowthScanReport, GrowthScanResult
 from tbank.balance import PortfolioBalance, get_balance
 from tbank.last_prices import get_last_price
 from tbank.order_execution import TBankPostOrderResult, post_market_order
-from tbank.shares import TBankShare
+from tbank.shares import (
+    MOEX_REAL_EXCHANGE,
+    TBankShare,
+)
 
 
 AUTO_ORDER_SOURCE = "AUTO_GROWTH_MONITOR"
@@ -801,7 +804,11 @@ async def execute_auto_trading_cycle(
         label="Продать при убытке, %",
     )
 
-    selected_shares = load_selected_shares()
+    selected_shares = [
+        share
+        for share in load_selected_shares()
+        if share.real_exchange == MOEX_REAL_EXCHANGE
+    ]
     shares_by_uid = {
         share.uid: share
         for share in selected_shares
