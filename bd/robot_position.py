@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 
 from bd.database import get_connection
+from bd.robot_realized_result import save_robot_realized_result
 from tbank.positions import TBankPortfolioPosition
 from tbank.shares import TBankShare
 
@@ -503,6 +504,8 @@ def apply_robot_order_fill(
     side: str,
     executed_lots: int,
     executed_price: Decimal,
+    robot_order_id: int | None = None,
+    source: str = "",
 ) -> None:
     if executed_lots <= 0:
         return
@@ -545,6 +548,21 @@ def apply_robot_order_fill(
                 "Исполнено больше лотов, чем было в позиции робота: "
                 f"executed_lots={executed_lots}, robot_lots={current_position.robot_lots}"
             )
+
+        save_robot_realized_result(
+            account_id=account_id,
+            robot_order_id=robot_order_id,
+            instrument_uid=share.uid,
+            ticker=share.ticker,
+            class_code=share.class_code,
+            name=share.name,
+            currency=share.currency,
+            lot=share.lot,
+            executed_lots=executed_lots,
+            average_buy_price=current_position.avg_price,
+            sell_price=executed_price,
+            source=source,
+        )
 
         new_robot_lots = current_position.robot_lots - executed_lots
         new_avg_price = (

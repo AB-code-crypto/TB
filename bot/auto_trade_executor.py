@@ -29,6 +29,7 @@ class RobotMarketOrderReport:
 class ExitOrdersResult:
     log_lines: list[str]
     exited_instrument_uids: set[str]
+    portfolio_changed: bool
 
 
 def _parse_positive_decimal_setting(
@@ -149,6 +150,8 @@ async def _send_robot_market_order(
             side=side,
             executed_lots=result.lots_executed,
             executed_price=result.executed_order_price,
+            robot_order_id=robot_order_id,
+            source=AUTO_ORDER_SOURCE,
         )
 
     return RobotMarketOrderReport(
@@ -170,6 +173,7 @@ async def _execute_exit_orders(
 ) -> ExitOrdersResult:
     log_lines: list[str] = []
     exited_instrument_uids: set[str] = set()
+    portfolio_changed = False
     positions = [
         position
         for position in list_robot_positions(account_id=account_id)
@@ -177,13 +181,21 @@ async def _execute_exit_orders(
     ]
 
     if not positions:
-        return ExitOrdersResult(log_lines=log_lines, exited_instrument_uids=exited_instrument_uids)
+        return ExitOrdersResult(
+            log_lines=log_lines,
+            exited_instrument_uids=exited_instrument_uids,
+            portfolio_changed=False,
+        )
 
     if not allow_sell:
         log_lines.append(
             "Автоторговля: продажи запрещены настройкой, выход из позиций не выполнялся."
         )
-        return ExitOrdersResult(log_lines=log_lines, exited_instrument_uids=exited_instrument_uids)
+        return ExitOrdersResult(
+            log_lines=log_lines,
+            exited_instrument_uids=exited_instrument_uids,
+            portfolio_changed=False,
+        )
 
     for position in positions:
         share = shares_by_uid.get(position.instrument_uid)
@@ -242,17 +254,21 @@ async def _execute_exit_orders(
         if position_growth_percent >= take_profit_percent:
             exit_reason = (
                 "take-profit "
-                f"{_format_percent(position_growth_percent)} >= {_format_percent(take_profit_percent)}"
+                f"{_format_percent(position_growth_percent)} >= "
+                f"{_format_percent(take_profit_percent)}"
             )
         elif position_growth_percent <= -stop_loss_percent:
             exit_reason = (
                 "stop-loss "
-                f"{_format_percent(position_growth_percent)} <= -{_format_percent(stop_loss_percent)}"
+                f"{_format_percent(position_growth_percent)} <= "
+                f"-{_format_percent(stop_loss_percent)}"
             )
         else:
             continue
 
-        estimated_amount = current_price * Decimal(position.robot_lots * position.lot)
+        estimated_amount = (
+            current_price * Decimal(position.robot_lots * position.lot)
+        )
 
         try:
             order_report = await _send_robot_market_order(
@@ -276,6 +292,7 @@ async def _execute_exit_orders(
 
         if order_report.result.lots_executed > 0:
             exited_instrument_uids.add(position.instrument_uid)
+            portfolio_changed = True
 
         log_lines.append(
             "Автопродажа отправлена: "
@@ -289,7 +306,12 @@ async def _execute_exit_orders(
             f"исполнено={order_report.result.lots_executed}."
         )
 
-    return ExitOrdersResult(log_lines=log_lines, exited_instrument_uids=exited_instrument_uids)
+    return ExitOrdersResult(
+        log_lines=log_lines,
+        exited_instrument_uids=exited_instrument_uids,
+        portfolio_changed=portfolio_changed,
+    )
+
 
 async def _execute_entry_orders(
     client,
@@ -300,17 +322,18 @@ async def _execute_entry_orders(
     bot_money_limits_by_currency: dict[str, Decimal],
     allow_buy: bool,
     blocked_entry_uids: set[str],
-) -> list[str]:
+) -> tuple[list[str], bool]:
     log_lines: list[str] = []
+    portfolio_changed = False
 
     if not new_signal_records:
-        return log_lines
+        return log_lines, portfolio_changed
 
     if not allow_buy:
         log_lines.append(
             "Автопокупка: покупки запрещены настройкой, новые сигналы не исполнялись."
         )
-        return log_lines
+        return log_lines, portfolio_changed
 
     open_positions = [
         position
@@ -467,6 +490,7 @@ async def _execute_entry_orders(
                 remaining_bot_limit - spent_amount
             )
             open_robot_uids.add(signal.instrument_uid)
+            portfolio_changed = True
 
         log_lines.append(
             "Автопокупка отправлена: "
@@ -479,7 +503,7 @@ async def _execute_entry_orders(
             f"исполнено={order_report.result.lots_executed}."
         )
 
-    return log_lines
+    return log_lines, portfolio_changed
 
 
 async def execute_auto_trading_cycle(
@@ -553,7 +577,7 @@ async def execute_auto_trading_cycle(
             stop_loss_percent=stop_loss_percent,
             allow_sell=allow_sell,
         )
-        entry_log_lines = await _execute_entry_orders(
+        entry_log_lines, entry_portfolio_changed = await _execute_entry_orders(
             client=client,
             account_id=account_id,
             shares_by_uid=shares_by_uid,
@@ -566,6 +590,16 @@ async def execute_auto_trading_cycle(
 
     log_lines.extend(exit_result.log_lines)
     log_lines.extend(entry_log_lines)
+
+    portfolio_changed = (
+        exit_result.portfolio_changed
+        or entry_portfolio_changed
+    )
+
+    if portfolio_changed:
+        log_lines.append(
+            "Портфель робота изменён: обновляю свободные средства."
+        )
 
     if len(log_lines) == 1:
         log_lines.append("Автоторговля: действий в этом цикле нет.")

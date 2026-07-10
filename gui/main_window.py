@@ -3,7 +3,7 @@ import os
 from uuid import uuid4
 from decimal import Decimal, InvalidOperation, ROUND_CEILING, ROUND_FLOOR
 from collections.abc import Callable, Coroutine
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from dotenv import load_dotenv
@@ -47,8 +47,15 @@ from bd.database_maintenance import (
     get_database_total_size_bytes,
     run_database_maintenance,
 )
+from bd.robot_realized_result import sum_robot_realized_results
 from bd.robot_order import create_robot_order, mark_robot_order_cancelled_by_broker_order, mark_robot_order_failed, mark_robot_order_sent
-from bd.robot_position import apply_robot_order_fill, get_robot_position, set_robot_position_lots, sync_robot_positions_with_broker
+from bd.robot_position import (
+    apply_robot_order_fill,
+    get_robot_position,
+    list_robot_positions,
+    set_robot_position_lots,
+    sync_robot_positions_with_broker,
+)
 from bd.settings_storage import (
     load_app_settings,
     load_selected_shares,
@@ -138,6 +145,10 @@ class MainWindow(QMainWindow):
         self.growth_monitor_worker: GrowthMonitorWorker | None = None
         self.pending_robot_start_settings: dict[str, object] | None = None
         self.pending_robot_start_account: TBankAccount | None = None
+        self.robot_session_started_at_utc: datetime | None = None
+        self.robot_session_finished_at_utc: datetime | None = None
+        self.runtime_available_money_by_currency: dict[str, Decimal] = {}
+        self.runtime_balance_refresh_in_progress = False
 
         self.all_shares: list[TBankShare] = []
         self.available_shares: list[TBankShare] = []
@@ -178,8 +189,10 @@ class MainWindow(QMainWindow):
 
         self.robot_status_label = QLabel("Робот: выключен")
         self.robot_mode_summary_label = QLabel("Режим: Тестирование")
-        self.robot_account_summary_label = QLabel("Account ID: не задан")
-        self.robot_selected_shares_summary_label = QLabel("Рабочих акций: 0")
+        self.robot_account_summary_label = QLabel("Свободно: —")
+        self.robot_selected_shares_summary_label = QLabel("Рабочих акций: 0 | Открытых позиций: 0")
+        self.robot_total_result_summary_label = QLabel("Результат всего, до комиссий: 0.00 RUB | 0.00 USD | 0.00 EUR")
+        self.robot_session_result_summary_label = QLabel("Результат сессии, до комиссий: 0.00 RUB | 0.00 USD | 0.00 EUR")
         self.manual_mode_checkbox = QCheckBox("Ручной режим")
         self.manual_mode_checkbox.setChecked(False)
 
@@ -321,6 +334,80 @@ class MainWindow(QMainWindow):
         )
         self._log(f"Сохранённых рабочих акций загружено: {len(self.selected_shares_by_uid)}")
 
+    def _format_currency_totals(
+        self,
+        totals: dict[str, Decimal],
+        show_positive_sign: bool = True,
+    ) -> str:
+        parts: list[str] = []
+
+        for currency in ("RUB", "USD", "EUR"):
+            amount = totals.get(currency, Decimal("0"))
+            prefix = "+" if show_positive_sign and amount > 0 else ""
+            parts.append(f"{prefix}{amount:.2f} {currency}")
+
+        return " | ".join(parts)
+
+    def _handle_account_id_changed(self) -> None:
+        self.runtime_available_money_by_currency = {}
+        self._refresh_robot_summary()
+
+    def _apply_runtime_balance(
+        self,
+        balance: PortfolioBalance,
+    ) -> None:
+        self.runtime_available_money_by_currency = {
+            money.currency.upper(): money.available
+            for money in balance.money
+        }
+        self.runtime_balance_refresh_in_progress = False
+        self._refresh_robot_summary()
+
+    def _handle_runtime_balance_error(
+        self,
+        error_text: str,
+    ) -> None:
+        self.runtime_balance_refresh_in_progress = False
+
+        if hasattr(self, "log_edit"):
+            self._log(
+                "Не удалось обновить свободные средства в статусе: "
+                f"{error_text}"
+            )
+
+    def refresh_runtime_balance(self) -> None:
+        if self.runtime_balance_refresh_in_progress:
+            return
+
+        token = self.token_edit.text().strip()
+        account_id = self.account_id_edit.text().strip()
+
+        if not token or not account_id:
+            return
+
+        self.runtime_balance_refresh_in_progress = True
+
+        async def task():
+            async with AsyncClient(token) as client:
+                return await asyncio.wait_for(
+                    get_balance(client, account_id),
+                    timeout=20,
+                )
+
+        self._run_async_task(
+            "runtime_balance",
+            task,
+            self._apply_runtime_balance,
+            self._handle_runtime_balance_error,
+        )
+
+    def _finish_robot_session(self) -> None:
+        if (
+            self.robot_session_started_at_utc is not None
+            and self.robot_session_finished_at_utc is None
+        ):
+            self.robot_session_finished_at_utc = datetime.now(timezone.utc)
+
     def _refresh_robot_summary(self) -> None:
         if not hasattr(self, "robot_mode_summary_label"):
             return
@@ -330,15 +417,72 @@ class MainWindow(QMainWindow):
             if self.auto_trading_enabled_checkbox.isChecked()
             else "Режим: Тестирование"
         )
-        account_id = self.account_id_edit.text().strip() if hasattr(self, "account_id_edit") else ""
+        account_id = (
+            self.account_id_edit.text().strip()
+            if hasattr(self, "account_id_edit")
+            else ""
+        )
 
-        if not account_id:
-            account_id = "не задан"
+        open_positions_count = 0
+        total_results = {
+            currency: Decimal("0")
+            for currency in ("RUB", "USD", "EUR")
+        }
+        session_results = {
+            currency: Decimal("0")
+            for currency in ("RUB", "USD", "EUR")
+        }
+
+        if account_id:
+            try:
+                open_positions_count = sum(
+                    1
+                    for position in list_robot_positions(
+                        account_id=account_id
+                    )
+                    if position.robot_lots > 0
+                )
+                total_results = sum_robot_realized_results(
+                    account_id=account_id,
+                )
+
+                if self.robot_session_started_at_utc is not None:
+                    session_results = sum_robot_realized_results(
+                        account_id=account_id,
+                        started_at_utc=self.robot_session_started_at_utc,
+                        finished_at_utc=self.robot_session_finished_at_utc,
+                    )
+            except Exception as error:
+                if hasattr(self, "log_edit"):
+                    self._log(
+                        "Не удалось обновить сводку робота из БД: "
+                        f"{type(error).__name__}: {error}"
+                    )
+
+        if self.runtime_available_money_by_currency:
+            balance_text = self._format_currency_totals(
+                self.runtime_available_money_by_currency,
+                show_positive_sign=False,
+            )
+        else:
+            balance_text = "—"
 
         self.robot_mode_summary_label.setText(mode_text)
-        self.robot_account_summary_label.setText(f"Account ID: {account_id}")
+        self.robot_account_summary_label.setText(
+            f"Свободно: {balance_text}"
+        )
         self.robot_selected_shares_summary_label.setText(
-            f"Рабочих акций: {len(self.selected_shares_by_uid)}"
+            "Рабочих акций: "
+            f"{len(self.selected_shares_by_uid)} | "
+            f"Открытых позиций: {open_positions_count}"
+        )
+        self.robot_total_result_summary_label.setText(
+            "Результат всего, до комиссий: "
+            f"{self._format_currency_totals(total_results)}"
+        )
+        self.robot_session_result_summary_label.setText(
+            "Результат сессии, до комиссий: "
+            f"{self._format_currency_totals(session_results)}"
         )
 
         if self.auto_trading_enabled_checkbox.isChecked():
@@ -409,6 +553,12 @@ class MainWindow(QMainWindow):
         status_layout.addWidget(self.robot_mode_summary_label, 0, 1)
         status_layout.addWidget(self.robot_account_summary_label, 0, 2)
         status_layout.addWidget(self.robot_selected_shares_summary_label, 0, 3)
+        status_layout.addWidget(
+            self.robot_total_result_summary_label, 1, 0, 1, 2
+        )
+        status_layout.addWidget(
+            self.robot_session_result_summary_label, 1, 2, 1, 2
+        )
 
         controls = QGroupBox("Подключение к T-Invest")
         controls_layout = QGridLayout(controls)
@@ -419,7 +569,7 @@ class MainWindow(QMainWindow):
         controls_layout.addWidget(QLabel("Account ID:"), 1, 0)
         controls_layout.addWidget(self.account_id_edit, 1, 1, 1, 3)
         self.account_id_edit.textChanged.connect(
-            lambda text: self._refresh_robot_summary()
+            lambda text: self._handle_account_id_changed()
         )
         self.auto_trading_enabled_checkbox.toggled.connect(
             lambda checked: self._refresh_robot_summary()
@@ -1651,6 +1801,8 @@ class MainWindow(QMainWindow):
 
         self.pending_robot_start_settings = None
         self.pending_robot_start_account = None
+        self.robot_session_started_at_utc = datetime.now(timezone.utc)
+        self.robot_session_finished_at_utc = None
 
         self.robot_is_running = True
         self._set_robot_inputs_locked(True)
@@ -1715,6 +1867,7 @@ class MainWindow(QMainWindow):
         self.growth_monitor_worker = worker
 
         thread.start()
+        self.refresh_runtime_balance()
 
     def stop_robot_placeholder(self) -> None:
         if self.growth_monitor_worker is None:
@@ -1733,6 +1886,9 @@ class MainWindow(QMainWindow):
     def _handle_growth_monitor_log_message(self, message: str) -> None:
         self._log(message)
 
+        if message == "Портфель робота изменён: обновляю свободные средства.":
+            self.refresh_runtime_balance()
+
         if (
             message.startswith("Growth monitor cycle #")
             or message.startswith("Ошибка цикла #")
@@ -1747,6 +1903,7 @@ class MainWindow(QMainWindow):
         self.refresh_robot_orders_table()
         self.refresh_robot_positions_table()
         self.refresh_growth_cycles_table()
+        self._refresh_robot_summary()
 
     def refresh_growth_current_table(self) -> None:
         fill_growth_current_table(self.growth_current_table)
@@ -1767,19 +1924,23 @@ class MainWindow(QMainWindow):
         fill_growth_cycles_table(self.growth_cycles_table)
 
     def _on_growth_monitor_finished(self) -> None:
+        self._finish_robot_session()
         self.robot_is_running = False
         self.pending_robot_start_settings = None
         self.pending_robot_start_account = None
         self._set_robot_inputs_locked(False)
         self._set_robot_visual_state("stopped")
+        self._refresh_robot_summary()
         self._log("Мониторинг остановлен.")
 
     def _on_growth_monitor_failed(self, error_text: str) -> None:
+        self._finish_robot_session()
         self.robot_is_running = False
         self.pending_robot_start_settings = None
         self.pending_robot_start_account = None
         self._set_robot_inputs_locked(False)
         self._set_robot_visual_state("error")
+        self._refresh_robot_summary()
         self._log(f"Ошибка мониторинга: {error_text}")
 
     def toggle_robot_monitoring(self, checked: bool) -> None:
@@ -2421,6 +2582,8 @@ class MainWindow(QMainWindow):
                         side=side,
                         executed_lots=result.lots_executed,
                         executed_price=result.executed_order_price,
+                        robot_order_id=robot_order_id,
+                        source="MANUAL_BUTTON",
                     )
 
                 return share, result, order_type, quantity_lots, limit_price
@@ -2465,6 +2628,7 @@ class MainWindow(QMainWindow):
         share, order_result, order_type, quantity_lots, limit_price = result
         self.refresh_robot_orders_table()
         self.refresh_robot_positions_table()
+        self._refresh_robot_summary()
 
         price_text = (
             f"limit_price={limit_price}, "
@@ -2480,6 +2644,9 @@ class MainWindow(QMainWindow):
             f"status={order_result.execution_report_status}, "
             f"исполнено лотов={order_result.lots_executed}."
         )
+
+        if order_result.lots_executed > 0:
+            self.refresh_runtime_balance()
 
         if order_type == "LIMIT":
             self._log("Обновляю активные заявки после лимитной заявки.")
@@ -3035,6 +3202,8 @@ class MainWindow(QMainWindow):
         self._run_async_task("balance", task, self.show_balance)
 
     def show_balance(self, balance: PortfolioBalance) -> None:
+        self._apply_runtime_balance(balance)
+
         self._log(f"Портфель всего: {balance.total_amount_portfolio:.2f}")
         self._log(f"Валюта: {balance.total_amount_currencies:.2f}")
         self._log(f"Акции: {balance.total_amount_shares:.2f}")
