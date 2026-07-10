@@ -7,6 +7,7 @@ from t_tech.invest.grpc import common_pb2, instruments_pb2
 
 NANO = Decimal("1000000000")
 MOEX_REAL_EXCHANGE = "REAL_EXCHANGE_MOEX"
+MOEX_SHARE_CURRENCY = "RUB"
 
 
 class InstrumentsService(Protocol):

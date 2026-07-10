@@ -13,6 +13,7 @@ from tbank.last_prices import get_last_price
 from tbank.order_execution import TBankPostOrderResult, post_market_order
 from tbank.shares import (
     MOEX_REAL_EXCHANGE,
+    MOEX_SHARE_CURRENCY,
     TBankShare,
 )
 
@@ -807,7 +808,10 @@ async def execute_auto_trading_cycle(
     selected_shares = [
         share
         for share in load_selected_shares()
-        if share.real_exchange == MOEX_REAL_EXCHANGE
+        if (
+            share.real_exchange == MOEX_REAL_EXCHANGE
+            and share.currency.upper() == MOEX_SHARE_CURRENCY
+        )
     ]
     shares_by_uid = {
         share.uid: share

@@ -25,6 +25,7 @@ from tbank.last_prices import (
 )
 from tbank.shares import (
     MOEX_REAL_EXCHANGE,
+    MOEX_SHARE_CURRENCY,
     TBankShare,
 )
 
@@ -164,7 +165,10 @@ async def scan_growth_once() -> GrowthScanReport:
     selected_shares = [
         share
         for share in load_selected_shares()
-        if share.real_exchange == MOEX_REAL_EXCHANGE
+        if (
+            share.real_exchange == MOEX_REAL_EXCHANGE
+            and share.currency.upper() == MOEX_SHARE_CURRENCY
+        )
     ]
 
     token = settings["token"]
