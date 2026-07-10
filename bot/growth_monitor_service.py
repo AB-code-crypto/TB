@@ -20,7 +20,7 @@ from bd.buy_intent import (
     BUY_INTENT_STATUS_SKIPPED,
     save_buy_intent,
 )
-from bd.price_snapshot import cleanup_old_price_snapshots
+from bd.price_snapshot import delete_price_snapshots_older_than
 from bd.settings_storage import load_app_settings
 from bot.growth_scanner import GrowthScanReport, GrowthScanResult, scan_growth_once
 from bot.auto_trade_executor import execute_auto_trading_cycle
@@ -63,21 +63,6 @@ def _get_scan_interval_seconds() -> int:
         raise ValueError("scan_interval_seconds должен быть больше 0.")
 
     return scan_interval_seconds
-
-
-def _get_price_snapshot_retention_days() -> int:
-    settings = load_app_settings()
-    raw_value = settings["price_snapshot_retention_days"]
-
-    try:
-        retention_days = int(raw_value)
-    except ValueError as error:
-        raise ValueError("price_snapshot_retention_days должен быть целым числом.") from error
-
-    if retention_days <= 0:
-        raise ValueError("price_snapshot_retention_days должен быть больше 0.")
-
-    return retention_days
 
 
 def _format_percent(value) -> str:
@@ -310,7 +295,7 @@ def build_success_log_lines(
         f"Сигналов в расчёте: {len(report.signals)}",
         f"Новых сигналов сохранено: {new_signals_count}",
         f"Дубликатов сигнала пропущено: {duplicate_signals_count}",
-        f"Удалено старых snapshot-строк: {deleted_old_price_snapshots_count}",
+        f"Удалено snapshot предыдущих свечей: {deleted_old_price_snapshots_count}",
         f"Всего сигналов в БД: {count_growth_signals()}",
         f"Всего циклов в БД: {count_growth_scan_cycles()}",
         f"Пропущено инструментов: {len(report.skipped)}",
@@ -399,14 +384,22 @@ async def run_growth_monitor_service(
 
         try:
             scan_interval_seconds = _get_scan_interval_seconds()
-            price_snapshot_retention_days = _get_price_snapshot_retention_days()
 
             report = await scan_growth_once()
             new_signals_count, duplicate_signals_count, new_signal_records = save_report_signals(report)
 
-            deleted_old_price_snapshots_count = cleanup_old_price_snapshots(
-                retention_days=price_snapshot_retention_days,
-            )
+            if report.results:
+                current_candle_start_utc = min(
+                    result.candle_time_utc
+                    for result in report.results
+                )
+                deleted_old_price_snapshots_count = (
+                    delete_price_snapshots_older_than(
+                        cutoff_time_utc=current_candle_start_utc,
+                    )
+                )
+            else:
+                deleted_old_price_snapshots_count = 0
 
             cycle_finished_at = datetime.now(timezone.utc)
 

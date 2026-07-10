@@ -1,3 +1,4 @@
+import asyncio
 import os
 from uuid import uuid4
 from decimal import Decimal, InvalidOperation, ROUND_CEILING, ROUND_FLOOR
@@ -37,6 +38,12 @@ from gui.monitoring_tables import (
     fill_growth_signals_table,
     fill_robot_orders_table,
     fill_robot_positions_table,
+)
+from bd.database_maintenance import (
+    DatabaseMaintenanceResult,
+    format_database_size,
+    get_database_total_size_bytes,
+    run_database_maintenance,
 )
 from bd.robot_order import create_robot_order, mark_robot_order_cancelled_by_broker_order, mark_robot_order_failed, mark_robot_order_sent
 from bd.robot_position import apply_robot_order_fill, get_robot_position, set_robot_position_lots, sync_robot_positions_with_broker
@@ -152,7 +159,6 @@ class MainWindow(QMainWindow):
         self.growth_candle_interval_combo.setCurrentText("30 секунд")
         self.scan_interval_seconds_edit = QLineEdit("10")
         self.max_price_age_seconds_edit = QLineEdit("30")
-        self.price_snapshot_retention_days_edit = QLineEdit("7")
         self.take_profit_percent_edit = QLineEdit("1.00")
         self.stop_loss_percent_edit = QLineEdit("1.00")
         self.bot_money_limit_edit = QLineEdit("10000.00")
@@ -433,8 +439,14 @@ class MainWindow(QMainWindow):
         strategy_layout.addWidget(QLabel("Макс. возраст цены, сек:"), 2, 2)
         strategy_layout.addWidget(self.max_price_age_seconds_edit, 2, 3)
 
-        strategy_layout.addWidget(QLabel("Хранить снимки цен, дней:"), 2, 4)
-        strategy_layout.addWidget(self.price_snapshot_retention_days_edit, 2, 5)
+        self.database_maintenance_button = QPushButton("Обслуживание БД")
+        self.database_maintenance_button.setToolTip(
+            "Проверить целостность, обрезать WAL и физически сжать SQLite."
+        )
+        self.database_maintenance_button.clicked.connect(
+            self.start_database_maintenance
+        )
+        strategy_layout.addWidget(self.database_maintenance_button, 2, 4, 1, 2)
 
         strategy_layout.addWidget(QLabel("Разрешения:"), 3, 0)
         strategy_layout.addWidget(self.allow_buy_checkbox, 3, 1)
@@ -641,9 +653,6 @@ class MainWindow(QMainWindow):
         if "max_price_age_seconds" in settings:
             self.max_price_age_seconds_edit.setText(settings["max_price_age_seconds"])
 
-        if "price_snapshot_retention_days" in settings:
-            self.price_snapshot_retention_days_edit.setText(settings["price_snapshot_retention_days"])
-
         if "take_profit_percent" in settings:
             self.take_profit_percent_edit.setText(settings["take_profit_percent"])
 
@@ -700,7 +709,6 @@ class MainWindow(QMainWindow):
             "growth_candle_interval": self.growth_candle_interval_combo.currentText(),
             "scan_interval_seconds": self.scan_interval_seconds_edit.text().strip(),
             "max_price_age_seconds": self.max_price_age_seconds_edit.text().strip(),
-            "price_snapshot_retention_days": self.price_snapshot_retention_days_edit.text().strip(),
             "take_profit_percent": self.take_profit_percent_edit.text().strip(),
             "stop_loss_percent": self.stop_loss_percent_edit.text().strip(),
             "bot_money_limit": self.bot_money_limit_edit.text().strip(),
@@ -755,7 +763,6 @@ class MainWindow(QMainWindow):
         self.growth_candle_interval_combo.setCurrentText("30 секунд")
         self.scan_interval_seconds_edit.setText("10")
         self.max_price_age_seconds_edit.setText("30")
-        self.price_snapshot_retention_days_edit.setText("3")
 
         self.take_profit_percent_edit.setText("1.00")
         self.stop_loss_percent_edit.setText("1.00")
@@ -885,16 +892,6 @@ class MainWindow(QMainWindow):
         if max_price_age_seconds <= 0:
             raise ValueError("Максимальный возраст цены должен быть больше 0.")
 
-        price_snapshot_retention_days_raw = self.price_snapshot_retention_days_edit.text().strip()
-
-        try:
-            price_snapshot_retention_days = int(price_snapshot_retention_days_raw)
-        except ValueError as error:
-            raise ValueError("Срок хранения снимков цен должен быть целым числом дней.") from error
-
-        if price_snapshot_retention_days <= 0:
-            raise ValueError("Срок хранения снимков цен должен быть больше 0.")
-
         take_profit_percent = self._parse_decimal_field(
             self.take_profit_percent_edit,
             "Продать при прибыли, %",
@@ -933,7 +930,6 @@ class MainWindow(QMainWindow):
             "growth_candle_interval_value": GROWTH_CANDLE_INTERVALS[growth_candle_interval],
             "scan_interval_seconds": scan_interval_seconds,
             "max_price_age_seconds": max_price_age_seconds,
-            "price_snapshot_retention_days": price_snapshot_retention_days,
             "take_profit_percent": take_profit_percent,
             "stop_loss_percent": stop_loss_percent,
             "bot_money_limit": bot_money_limit,
@@ -953,7 +949,7 @@ class MainWindow(QMainWindow):
             self.growth_candle_interval_combo,
             self.scan_interval_seconds_edit,
             self.max_price_age_seconds_edit,
-            self.price_snapshot_retention_days_edit,
+            self.database_maintenance_button,
             self.take_profit_percent_edit,
             self.stop_loss_percent_edit,
             self.bot_money_limit_edit,
@@ -1048,38 +1044,63 @@ class MainWindow(QMainWindow):
                 self._set_robot_visual_state("stopped")
                 return
 
-        client_is_qualified = self.qualified_investor_checkbox.isChecked()
-        only_liquid_shares = self.only_liquid_shares_checkbox.isChecked()
+        selected_shares = list(self.selected_shares_by_uid.values())
+
+        if not selected_shares:
+            self._reject_robot_start(
+                "Рабочий список акций пуст. "
+                "Сначала нажмите 'Загрузить акции', выберите рабочие акции "
+                "и сохраните/обновите рабочий список."
+            )
+            return
 
         self._set_robot_inputs_locked(True)
         self._set_robot_visual_state("starting")
         self._log("Проверяю token/account_id через T-Invest API.")
-        self._log("Проверяю рабочие акции через T-Invest API.")
+        self._log(
+            "Использую сохранённый рабочий список акций. "
+            "Полный справочник акций на старте робота не загружается."
+        )
         self._log("Синхронизирую позиции робота с брокером.")
+
+        async def call_api_with_timeout(coro, timeout_seconds: float, stage: str):
+            try:
+                return await asyncio.wait_for(coro, timeout=timeout_seconds)
+            except TimeoutError as error:
+                raise TimeoutError(
+                    f"API не ответил за {timeout_seconds:.0f} сек. Этап: {stage}."
+                ) from error
 
         async def task():
             async with AsyncClient(token) as client:
-                accounts = await get_accounts(client)
+                accounts = await call_api_with_timeout(
+                    get_accounts(client),
+                    timeout_seconds=20,
+                    stage="проверка аккаунтов",
+                )
                 account_exists = any(
                     account.account_id == account_id
                     for account in accounts
                 )
 
                 if not account_exists:
-                    return accounts, [], []
+                    return accounts, selected_shares, []
 
-                shares = await get_shares(client)
-                positions = await get_portfolio_positions(client, account_id)
+                positions = await call_api_with_timeout(
+                    get_portfolio_positions(client, account_id),
+                    timeout_seconds=20,
+                    stage="загрузка портфеля / синхронизация позиций",
+                )
 
-                return accounts, shares, positions
+                return accounts, selected_shares, positions
 
         def on_success(result: tuple[list[TBankAccount], list[TBankShare], list[TBankPortfolioPosition]]) -> None:
             self._handle_robot_start_validation_success(
                 result=result,
                 account_id=account_id,
                 settings=settings,
-                client_is_qualified=client_is_qualified,
-                only_liquid_shares=only_liquid_shares,
+                client_is_qualified=self.qualified_investor_checkbox.isChecked(),
+                only_liquid_shares=self.only_liquid_shares_checkbox.isChecked(),
             )
 
         self._run_async_task(
@@ -1097,7 +1118,7 @@ class MainWindow(QMainWindow):
         client_is_qualified: bool,
         only_liquid_shares: bool,
     ) -> None:
-        accounts, shares, broker_positions = result
+        accounts, selected_shares, broker_positions = result
 
         account = next(
             (
@@ -1123,60 +1144,25 @@ class MainWindow(QMainWindow):
             )
             return
 
-        available_shares = self._filter_available_shares(
-            shares=shares,
-            client_is_qualified=client_is_qualified,
-            only_liquid_shares=only_liquid_shares,
-        )
-        available_shares_by_uid = {
-            share.uid: share
-            for share in available_shares
-        }
-        selected_uids = list(self.selected_shares_by_uid)
-
-        invalid_selected_shares: list[str] = []
-
-        for uid in selected_uids:
-            if uid in available_shares_by_uid:
-                continue
-
-            share = self.selected_shares_by_uid[uid]
-            invalid_selected_shares.append(
-                f"{share.ticker}_{share.class_code} ({uid})"
-            )
-
-        if invalid_selected_shares:
-            shown_items = "\n".join(
-                f"- {item}"
-                for item in invalid_selected_shares[:20]
-            )
-
-            if len(invalid_selected_shares) > 20:
-                shown_items += (
-                    f"\n... ещё {len(invalid_selected_shares) - 20}"
-                )
-
+        if not selected_shares:
             self._reject_robot_start(
-                "Некоторые рабочие акции не прошли текущую проверку через API "
-                "и не могут использоваться при запуске робота:\n"
-                f"{shown_items}"
+                "Рабочий список акций пуст. "
+                "Сначала нажмите 'Загрузить акции', выберите рабочие акции "
+                "и сохраните/обновите рабочий список."
             )
             return
 
-        self.all_shares = shares
-        self.available_shares = available_shares
         self.selected_shares_by_uid = {
-            uid: available_shares_by_uid[uid]
-            for uid in selected_uids
+            share.uid: share
+            for share in selected_shares
         }
 
-        self.refresh_available_shares_table()
         self.refresh_selected_shares_table()
 
         sync_report = sync_robot_positions_with_broker(
             account_id=account_id,
             broker_positions=broker_positions,
-            shares=shares,
+            shares=selected_shares,
         )
         self.pending_robot_start_settings = settings
         self.pending_robot_start_account = account
@@ -1194,7 +1180,6 @@ class MainWindow(QMainWindow):
             "Проверьте колонку 'Лотов у робота' и нажмите "
             "'Обновить позиции и запустить робота'."
         )
-
 
     def _handle_robot_start_validation_error(self, error_text: str) -> None:
         clean_error_text = error_text.strip()
@@ -2038,6 +2023,114 @@ class MainWindow(QMainWindow):
         else:
             self._log("Обновляю активные позиции после рыночной заявки.")
             self.load_positions()
+
+    def start_database_maintenance(self) -> None:
+        if self.robot_is_running or self.growth_monitor_worker is not None:
+            QMessageBox.warning(
+                self,
+                "Робот работает",
+                "Сначала выключите робота, затем запустите обслуживание БД.",
+            )
+            return
+
+        if (
+            self.pending_robot_start_settings is not None
+            or self.pending_robot_start_account is not None
+        ):
+            QMessageBox.warning(
+                self,
+                "Запуск робота не завершён",
+                "Завершите или отмените синхронизацию позиций перед обслуживанием БД.",
+            )
+            return
+
+        if self.workers:
+            QMessageBox.warning(
+                self,
+                "Есть активная задача",
+                "Дождитесь завершения текущих операций и повторите обслуживание БД.",
+            )
+            return
+
+        before_bytes = get_database_total_size_bytes()
+        answer = QMessageBox.question(
+            self,
+            "Обслуживание БД",
+            (
+                "Будут выполнены проверка целостности, очистка WAL и VACUUM.\n\n"
+                f"Текущий размер файлов БД: {format_database_size(before_bytes)}.\n"
+                "Операция может занять несколько минут. "
+                "Во время неё приложение не закрывайте.\n\n"
+                "Продолжить?"
+            ),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+
+        if answer != QMessageBox.StandardButton.Yes:
+            self._log("Обслуживание БД отменено пользователем.")
+            return
+
+        self._set_robot_inputs_locked(True)
+        self.robot_toggle_button.setEnabled(False)
+        self.database_maintenance_button.setEnabled(False)
+        self._log(
+            "Обслуживание БД запущено: quick_check, WAL checkpoint, VACUUM, optimize."
+        )
+        self._log(
+            f"Размер файлов БД до обслуживания: {format_database_size(before_bytes)}."
+        )
+
+        async def task():
+            return run_database_maintenance()
+
+        self._run_async_task(
+            "database_maintenance",
+            task,
+            self.show_database_maintenance_result,
+            self._handle_database_maintenance_error,
+        )
+
+    def _finish_database_maintenance_ui(self) -> None:
+        self._set_robot_inputs_locked(False)
+        self._set_robot_visual_state("stopped")
+        self.database_maintenance_button.setEnabled(True)
+
+    def show_database_maintenance_result(
+        self,
+        result: DatabaseMaintenanceResult,
+    ) -> None:
+        self._finish_database_maintenance_ui()
+        self._log(
+            "Обслуживание БД завершено: "
+            f"до={format_database_size(result.before_bytes)}, "
+            f"после={format_database_size(result.after_bytes)}, "
+            f"освобождено={format_database_size(result.reclaimed_bytes)}, "
+            f"quick_check={result.quick_check_result}."
+        )
+        QMessageBox.information(
+            self,
+            "Обслуживание БД завершено",
+            (
+                f"Размер до: {format_database_size(result.before_bytes)}\n"
+                f"Размер после: {format_database_size(result.after_bytes)}\n"
+                f"Освобождено: {format_database_size(result.reclaimed_bytes)}"
+            ),
+        )
+
+    def _handle_database_maintenance_error(self, error_text: str) -> None:
+        self._finish_database_maintenance_ui()
+        clean_error_text = error_text.strip()
+
+        if not clean_error_text:
+            clean_error_text = "Неизвестная ошибка обслуживания базы данных."
+
+        self._log(f"Ошибка обслуживания БД: {clean_error_text}")
+        QMessageBox.critical(
+            self,
+            "Ошибка обслуживания БД",
+            clean_error_text,
+        )
 
     def _get_token(self) -> str:
         token = self.token_edit.text().strip()
