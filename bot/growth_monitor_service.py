@@ -67,6 +67,26 @@ def _get_scan_interval_seconds() -> int:
     return scan_interval_seconds
 
 
+def _parse_non_negative_decimal_setting(
+    settings: dict[str, str],
+    key: str,
+    label: str,
+) -> Decimal:
+    raw_value = settings[key].strip().replace(",", ".").replace(" ", "")
+
+    try:
+        value = Decimal(raw_value)
+    except InvalidOperation as error:
+        raise ValueError(
+            f"{label}: некорректное число в настройках: {settings[key]!r}"
+        ) from error
+
+    if value < 0:
+        raise ValueError(f"{label} не может быть меньше 0.")
+
+    return value
+
+
 def _format_percent(value) -> str:
     return f"{value:.4f}%"
 
@@ -127,7 +147,7 @@ def save_dry_run_buy_intents(
 
     allow_buy = settings["allow_buy"] == "1"
     requested_amounts_by_currency = {
-        currency: _parse_positive_decimal_setting(
+        currency: _parse_non_negative_decimal_setting(
             settings=settings,
             key=f"auto_buy_amount_{currency.lower()}",
             label=f"Сумма автопокупки {currency}",
@@ -135,7 +155,7 @@ def save_dry_run_buy_intents(
         for currency in TRADE_CURRENCIES
     }
     remaining_limits_by_currency = {
-        currency: _parse_positive_decimal_setting(
+        currency: _parse_non_negative_decimal_setting(
             settings=settings,
             key=f"bot_money_limit_{currency.lower()}",
             label=f"Лимит денег для бота {currency}",
@@ -168,6 +188,19 @@ def save_dry_run_buy_intents(
             reason = "Покупки запрещены настройкой allow_buy."
         elif currency not in requested_amounts_by_currency:
             reason = f"Валюта инструмента не поддерживается: {currency}."
+        elif requested_amount <= 0:
+            reason = (
+                f"Сумма автопокупки {currency} равна 0; "
+                "покупки в этой валюте отключены."
+            )
+        elif remaining_limits_by_currency.get(
+            currency,
+            Decimal("0"),
+        ) <= 0:
+            reason = (
+                f"Лимит денег бота {currency} равен 0; "
+                "покупки в этой валюте отключены."
+            )
         else:
             one_lot_amount = signal.current_price * Decimal(signal.lot)
 

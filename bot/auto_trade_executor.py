@@ -52,6 +52,26 @@ def _parse_positive_decimal_setting(
     return value
 
 
+def _parse_non_negative_decimal_setting(
+    settings: dict[str, str],
+    key: str,
+    label: str,
+) -> Decimal:
+    raw_value = settings[key].strip().replace(",", ".").replace(" ", "")
+
+    try:
+        value = Decimal(raw_value)
+    except InvalidOperation as error:
+        raise ValueError(
+            f"{label}: некорректное число в настройках: {settings[key]!r}"
+        ) from error
+
+    if value < 0:
+        raise ValueError(f"{label} не может быть меньше 0.")
+
+    return value
+
+
 def _format_percent(value: Decimal) -> str:
     return f"{value:.4f}%"
 
@@ -406,6 +426,10 @@ async def _execute_entry_orders(
             continue
 
         requested_amount = requested_amounts_by_currency[currency]
+        configured_bot_limit = bot_money_limits_by_currency.get(
+            currency,
+            Decimal("0"),
+        )
         remaining_bot_limit = remaining_limits_by_currency.get(
             currency,
             Decimal("0"),
@@ -414,6 +438,20 @@ async def _execute_entry_orders(
             currency,
             Decimal("0"),
         )
+
+        if requested_amount <= 0:
+            log_lines.append(
+                "Автопокупка пропущена: сумма автопокупки равна 0: "
+                f"{signal.ticker}_{signal.class_code}, currency={currency}."
+            )
+            continue
+
+        if configured_bot_limit <= 0:
+            log_lines.append(
+                "Автопокупка пропущена: лимит денег бота равен 0: "
+                f"{signal.ticker}_{signal.class_code}, currency={currency}."
+            )
+            continue
 
         if remaining_bot_limit <= 0:
             log_lines.append(
@@ -737,7 +775,7 @@ async def execute_auto_trading_cycle(
     allow_buy = settings["allow_buy"] == "1"
     allow_sell = settings["allow_sell"] == "1"
     requested_amounts_by_currency = {
-        currency: _parse_positive_decimal_setting(
+        currency: _parse_non_negative_decimal_setting(
             settings=settings,
             key=f"auto_buy_amount_{currency.lower()}",
             label=f"Сумма автопокупки {currency}",
@@ -745,7 +783,7 @@ async def execute_auto_trading_cycle(
         for currency in SUPPORTED_TRADE_CURRENCIES
     }
     bot_money_limits_by_currency = {
-        currency: _parse_positive_decimal_setting(
+        currency: _parse_non_negative_decimal_setting(
             settings=settings,
             key=f"bot_money_limit_{currency.lower()}",
             label=f"Лимит денег бота {currency}",
