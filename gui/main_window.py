@@ -1432,11 +1432,38 @@ class MainWindow(QMainWindow):
             )
             return
 
+        eligible_selected_shares = [
+            share
+            for share in selected_shares
+            if self._share_passes_fixed_filters(
+                share=share,
+                client_is_qualified=client_is_qualified,
+                only_liquid_shares=only_liquid_shares,
+            )
+        ]
+        removed_shares_count = (
+            len(selected_shares)
+            - len(eligible_selected_shares)
+        )
+
+        if removed_shares_count:
+            selected_shares = eligible_selected_shares
+            self.selected_shares_by_uid = {
+                share.uid: share
+                for share in selected_shares
+            }
+            save_selected_shares(selected_shares)
+            self.refresh_selected_shares_table()
+            self._log(
+                "Перед запуском из рабочего списка удалены акции, "
+                "которые не проходят текущие фильтры: "
+                f"{removed_shares_count}."
+            )
+
         if not selected_shares:
             self._reject_robot_start(
-                "Рабочий список акций пуст. "
-                "Сначала нажмите 'Загрузить акции', выберите рабочие акции "
-                "и сохраните/обновите рабочий список."
+                "Рабочий список акций пуст после применения текущих фильтров. "
+                "Нажмите 'Загрузить акции' и заново выберите рабочий список."
             )
             return
 

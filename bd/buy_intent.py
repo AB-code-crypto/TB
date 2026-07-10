@@ -185,6 +185,25 @@ def save_buy_intent(
     if estimated_order_amount < 0:
         raise ValueError("estimated_order_amount не может быть меньше 0.")
 
+    if status == BUY_INTENT_STATUS_PLANNED:
+        if requested_amount <= 0:
+            raise ValueError(
+                "Для запланированной покупки requested_amount "
+                "должен быть больше 0."
+            )
+
+        if quantity_lots <= 0 or quantity_shares <= 0:
+            raise ValueError(
+                "Для запланированной покупки количество лотов "
+                "и акций должно быть больше 0."
+            )
+
+        if estimated_order_amount <= 0:
+            raise ValueError(
+                "Для запланированной покупки estimated_order_amount "
+                "должен быть больше 0."
+            )
+
     with get_connection() as connection:
         cursor = connection.execute(
             """
