@@ -33,6 +33,10 @@ from t_tech.invest.grpc import marketdata_pb2
 
 from gui.worker import AsyncTaskWorker
 from gui.growth_monitor_worker import GrowthMonitorWorker
+from bot.auto_trade_executor import (
+    BulkRobotSellReport,
+    sell_all_robot_positions,
+)
 from gui.monitoring_tables import (
     fill_buy_intents_table,
     fill_growth_current_table,
@@ -579,16 +583,30 @@ class MainWindow(QMainWindow):
         balance_button = QPushButton("Получить баланс")
         active_orders_button = QPushButton("Активные заявки")
         self.shares_button = QPushButton("Загрузить акции")
+        self.sell_all_robot_positions_button = QPushButton("Продать все позиции робота")
+        self.sell_all_robot_positions_button.setToolTip(
+            "Отправить реальные рыночные заявки на продажу "
+            "только позиций, закреплённых за роботом."
+        )
+        self.sell_all_robot_positions_button.setStyleSheet(
+            "font-weight: bold; color: #8a1f11;"
+        )
 
         self.accounts_button.clicked.connect(self.load_accounts)
         balance_button.clicked.connect(self.load_balance)
         active_orders_button.clicked.connect(self.load_active_orders)
         self.shares_button.clicked.connect(self.load_shares)
+        self.sell_all_robot_positions_button.clicked.connect(
+            self.start_sell_all_robot_positions
+        )
 
         controls_layout.addWidget(self.accounts_button, 2, 0)
         controls_layout.addWidget(balance_button, 2, 1)
         controls_layout.addWidget(active_orders_button, 2, 2)
         controls_layout.addWidget(self.shares_button, 2, 3)
+        controls_layout.addWidget(
+            self.sell_all_robot_positions_button, 2, 4
+        )
 
         self.qualified_investor_checkbox.toggled.connect(
             lambda checked: self.refresh_shares_after_filter_change()
@@ -1563,6 +1581,7 @@ class MainWindow(QMainWindow):
             self.manual_last_price_button,
             self.accounts_button,
             self.shares_button,
+            self.sell_all_robot_positions_button,
             self.apply_checked_shares_button,
             self.clear_selected_shares_button,
             self.save_state_button,
@@ -2654,6 +2673,263 @@ class MainWindow(QMainWindow):
         else:
             self._log("Обновляю активные позиции после рыночной заявки.")
             self.load_positions()
+
+    def start_sell_all_robot_positions(self) -> None:
+        if self.robot_is_running or self.growth_monitor_worker is not None:
+            QMessageBox.warning(
+                self,
+                "Робот работает",
+                "Сначала выключите робота, затем продавайте все позиции.",
+            )
+            return
+
+        if (
+            self.pending_robot_start_settings is not None
+            or self.pending_robot_start_account is not None
+        ):
+            QMessageBox.warning(
+                self,
+                "Запуск робота не завершён",
+                "Завершите или отмените синхронизацию перед массовой продажей.",
+            )
+            return
+
+        if self.workers:
+            QMessageBox.warning(
+                self,
+                "Есть активная задача",
+                "Дождитесь завершения текущей операции и повторите продажу.",
+            )
+            return
+
+        try:
+            token = self._get_token()
+            account_id = self._get_account_id()
+        except ValueError as error:
+            QMessageBox.warning(
+                self,
+                "Продажа всех позиций",
+                str(error),
+            )
+            return
+
+        positions = [
+            position
+            for position in list_robot_positions(account_id=account_id)
+            if position.robot_lots > 0
+        ]
+
+        if not positions:
+            QMessageBox.information(
+                self,
+                "Позиции робота",
+                "У робота нет открытых позиций для продажи.",
+            )
+            self._refresh_robot_summary()
+            return
+
+        preview_lines = [
+            (
+                f"{position.ticker}_{position.class_code} — "
+                f"{position.robot_lots} лот(ов), "
+                f"{position.currency}"
+            )
+            for position in positions[:20]
+        ]
+
+        if len(positions) > 20:
+            preview_lines.append(
+                f"... ещё {len(positions) - 20} позиций"
+            )
+
+        preview_text = "\n".join(preview_lines)
+        answer = QMessageBox.warning(
+            self,
+            "Продать все позиции робота",
+            (
+                "Будут отправлены РЕАЛЬНЫЕ рыночные заявки на продажу "
+                "всех позиций, закреплённых за роботом.\n\n"
+                "Внешние позиции клиента не затрагиваются.\n\n"
+                f"{preview_text}\n\n"
+                "Продолжить?"
+            ),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+
+        if answer != QMessageBox.StandardButton.Yes:
+            self._log("Продажа всех позиций робота отменена пользователем.")
+            return
+
+        tracked_uids = {
+            position.instrument_uid
+            for position in positions
+        }
+
+        self._set_robot_inputs_locked(True)
+        self.robot_toggle_button.setEnabled(False)
+        self.sell_all_robot_positions_button.setText(
+            "Продажа позиций..."
+        )
+        self.sell_all_robot_positions_button.setEnabled(False)
+        self._log(
+            "Запущена массовая продажа позиций робота: "
+            f"позиций={len(positions)}."
+        )
+
+        async def task():
+            async with AsyncClient(token) as client:
+                shares = await asyncio.wait_for(
+                    get_shares(client),
+                    timeout=40,
+                )
+                broker_positions = await asyncio.wait_for(
+                    get_portfolio_positions(client, account_id),
+                    timeout=20,
+                )
+                tracked_shares = [
+                    share
+                    for share in shares
+                    if share.uid in tracked_uids
+                ]
+                sync_report = sync_robot_positions_with_broker(
+                    account_id=account_id,
+                    broker_positions=broker_positions,
+                    shares=tracked_shares,
+                )
+                sell_report = await sell_all_robot_positions(
+                    client=client,
+                    account_id=account_id,
+                    shares=tracked_shares,
+                )
+
+                return sync_report, sell_report
+
+        self._run_async_task(
+            "sell_all_robot_positions",
+            task,
+            self.show_sell_all_robot_positions_result,
+            self._handle_sell_all_robot_positions_error,
+        )
+
+    def _finish_sell_all_robot_positions_ui(self) -> None:
+        self._set_robot_inputs_locked(False)
+        self._set_robot_visual_state("stopped")
+        self.sell_all_robot_positions_button.setText(
+            "Продать все позиции робота"
+        )
+        self.sell_all_robot_positions_button.setEnabled(True)
+
+    def show_sell_all_robot_positions_result(
+        self,
+        result: tuple[object, BulkRobotSellReport],
+    ) -> None:
+        sync_report, sell_report = result
+        self._finish_sell_all_robot_positions_ui()
+
+        self._log(
+            "Позиции синхронизированы перед массовой продажей: "
+            f"проверено={sync_report.checked_count}, "
+            f"уменьшено={sync_report.reduced_count}, "
+            f"обнулено={sync_report.zeroed_count}."
+        )
+
+        for item in sell_report.items:
+            instrument = f"{item.ticker}_{item.class_code}"
+
+            if item.error_text:
+                self._log(
+                    "Массовая продажа: НЕ ПРОДАНО: "
+                    f"{instrument}, "
+                    f"запрошено={item.requested_lots}, "
+                    f"исполнено={item.executed_lots}, "
+                    f"ошибка={item.error_text}"
+                )
+            elif item.executed_lots < item.requested_lots:
+                self._log(
+                    "Массовая продажа: ЧАСТИЧНО: "
+                    f"{instrument}, "
+                    f"запрошено={item.requested_lots}, "
+                    f"исполнено={item.executed_lots}, "
+                    f"status={item.execution_report_status}, "
+                    f"broker_order_id={item.broker_order_id}."
+                )
+            else:
+                self._log(
+                    "Массовая продажа: ПРОДАНО: "
+                    f"{instrument}, "
+                    f"лотов={item.executed_lots}, "
+                    f"status={item.execution_report_status}, "
+                    f"broker_order_id={item.broker_order_id}."
+                )
+
+        self.refresh_robot_orders_table()
+        self.refresh_robot_positions_table()
+        self._refresh_robot_summary()
+        self.refresh_runtime_balance()
+
+        summary_text = (
+            f"Полностью продано: {sell_report.fully_sold_count}\n"
+            f"Частично продано: {sell_report.partially_sold_count}\n"
+            f"Не продано: {sell_report.failed_count}\n"
+            f"Всего исполнено лотов: "
+            f"{sell_report.total_executed_lots}"
+        )
+
+        self._log(
+            "Массовая продажа завершена: "
+            f"полностью={sell_report.fully_sold_count}, "
+            f"частично={sell_report.partially_sold_count}, "
+            f"не продано={sell_report.failed_count}, "
+            f"исполнено лотов={sell_report.total_executed_lots}."
+        )
+
+        if sell_report.total_positions_count == 0:
+            QMessageBox.information(
+                self,
+                "Продажа всех позиций",
+                (
+                    "После синхронизации с брокером открытых "
+                    "позиций робота не осталось."
+                ),
+            )
+        elif (
+            sell_report.failed_count > 0
+            or sell_report.partially_sold_count > 0
+        ):
+            QMessageBox.warning(
+                self,
+                "Продажа завершена не полностью",
+                summary_text,
+            )
+        else:
+            QMessageBox.information(
+                self,
+                "Все позиции проданы",
+                summary_text,
+            )
+
+    def _handle_sell_all_robot_positions_error(
+        self,
+        error_text: str,
+    ) -> None:
+        self._finish_sell_all_robot_positions_ui()
+        clean_error_text = error_text.strip()
+
+        if not clean_error_text:
+            clean_error_text = (
+                "Неизвестная ошибка массовой продажи позиций."
+            )
+
+        self._log(
+            "Ошибка массовой продажи позиций робота: "
+            f"{clean_error_text}"
+        )
+        QMessageBox.critical(
+            self,
+            "Ошибка продажи всех позиций",
+            clean_error_text,
+        )
 
     def start_database_maintenance(self) -> None:
         if self.robot_is_running or self.growth_monitor_worker is not None:

@@ -100,6 +100,7 @@ async def _send_robot_market_order(
     side: str,
     quantity_lots: int,
     estimated_amount: Decimal,
+    source: str = AUTO_ORDER_SOURCE,
 ) -> RobotMarketOrderReport:
     order_request_id = uuid4().hex
     robot_order_id = create_robot_order(
@@ -115,7 +116,7 @@ async def _send_robot_market_order(
         quantity_shares=quantity_lots * share.lot,
         limit_price=Decimal("0"),
         requested_amount=estimated_amount,
-        source=AUTO_ORDER_SOURCE,
+        source=source,
     )
 
     try:
@@ -151,7 +152,7 @@ async def _send_robot_market_order(
             executed_lots=result.lots_executed,
             executed_price=result.executed_order_price,
             robot_order_id=robot_order_id,
-            source=AUTO_ORDER_SOURCE,
+            source=source,
         )
 
     return RobotMarketOrderReport(
@@ -504,6 +505,203 @@ async def _execute_entry_orders(
         )
 
     return log_lines, portfolio_changed
+
+
+BULK_CLOSE_ORDER_SOURCE = "BULK_CLOSE_BUTTON"
+
+
+@dataclass(frozen=True)
+class BulkRobotSellItem:
+    ticker: str
+    class_code: str
+    currency: str
+    requested_lots: int
+    executed_lots: int
+    broker_order_id: str
+    execution_report_status: str
+    error_text: str
+
+
+@dataclass(frozen=True)
+class BulkRobotSellReport:
+    items: list[BulkRobotSellItem]
+
+    @property
+    def total_positions_count(self) -> int:
+        return len(self.items)
+
+    @property
+    def fully_sold_count(self) -> int:
+        return sum(
+            1
+            for item in self.items
+            if (
+                not item.error_text
+                and item.executed_lots >= item.requested_lots
+            )
+        )
+
+    @property
+    def partially_sold_count(self) -> int:
+        return sum(
+            1
+            for item in self.items
+            if (
+                not item.error_text
+                and 0 < item.executed_lots < item.requested_lots
+            )
+        )
+
+    @property
+    def failed_count(self) -> int:
+        return sum(
+            1
+            for item in self.items
+            if item.error_text or item.executed_lots <= 0
+        )
+
+    @property
+    def total_executed_lots(self) -> int:
+        return sum(item.executed_lots for item in self.items)
+
+
+async def sell_all_robot_positions(
+    client,
+    account_id: str,
+    shares: list[TBankShare],
+) -> BulkRobotSellReport:
+    shares_by_uid = {
+        share.uid: share
+        for share in shares
+    }
+    positions = [
+        position
+        for position in list_robot_positions(account_id=account_id)
+        if position.robot_lots > 0
+    ]
+    items: list[BulkRobotSellItem] = []
+
+    for position in positions:
+        share = shares_by_uid.get(position.instrument_uid)
+
+        if share is None:
+            items.append(
+                BulkRobotSellItem(
+                    ticker=position.ticker,
+                    class_code=position.class_code,
+                    currency=position.currency,
+                    requested_lots=position.robot_lots,
+                    executed_lots=0,
+                    broker_order_id="",
+                    execution_report_status="",
+                    error_text=(
+                        "Акция не найдена в справочнике T-Invest. "
+                        "Рыночная заявка не отправлена."
+                    ),
+                )
+            )
+            continue
+
+        if not share.api_trade_available_flag:
+            items.append(
+                BulkRobotSellItem(
+                    ticker=position.ticker,
+                    class_code=position.class_code,
+                    currency=position.currency,
+                    requested_lots=position.robot_lots,
+                    executed_lots=0,
+                    broker_order_id="",
+                    execution_report_status="",
+                    error_text="Торговля инструментом через API недоступна.",
+                )
+            )
+            continue
+
+        if not share.sell_available_flag:
+            items.append(
+                BulkRobotSellItem(
+                    ticker=position.ticker,
+                    class_code=position.class_code,
+                    currency=position.currency,
+                    requested_lots=position.robot_lots,
+                    executed_lots=0,
+                    broker_order_id="",
+                    execution_report_status="",
+                    error_text="Продажа инструмента сейчас недоступна.",
+                )
+            )
+            continue
+
+        if share.blocked_tca_flag:
+            items.append(
+                BulkRobotSellItem(
+                    ticker=position.ticker,
+                    class_code=position.class_code,
+                    currency=position.currency,
+                    requested_lots=position.robot_lots,
+                    executed_lots=0,
+                    broker_order_id="",
+                    execution_report_status="",
+                    error_text="Инструмент заблокирован для торговли.",
+                )
+            )
+            continue
+
+        estimated_amount = (
+            position.avg_price
+            * Decimal(position.robot_lots * position.lot)
+        )
+
+        try:
+            order_report = await _send_robot_market_order(
+                client=client,
+                account_id=account_id,
+                share=share,
+                side="SELL",
+                quantity_lots=position.robot_lots,
+                estimated_amount=estimated_amount,
+                source=BULK_CLOSE_ORDER_SOURCE,
+            )
+        except Exception as error:
+            error_text = str(error).strip() or repr(error)
+            items.append(
+                BulkRobotSellItem(
+                    ticker=position.ticker,
+                    class_code=position.class_code,
+                    currency=position.currency,
+                    requested_lots=position.robot_lots,
+                    executed_lots=0,
+                    broker_order_id="",
+                    execution_report_status="",
+                    error_text=(
+                        f"{type(error).__name__}: {error_text}"
+                    ),
+                )
+            )
+            continue
+
+        result = order_report.result
+        error_text = ""
+
+        if result.lots_executed <= 0:
+            error_text = (
+                "Рыночная заявка отправлена, но ни один лот не исполнен."
+            )
+
+        items.append(
+            BulkRobotSellItem(
+                ticker=position.ticker,
+                class_code=position.class_code,
+                currency=position.currency,
+                requested_lots=position.robot_lots,
+                executed_lots=result.lots_executed,
+                broker_order_id=result.broker_order_id,
+                execution_report_status=result.execution_report_status,
+                error_text=error_text,
+            )
+        )
+
+    return BulkRobotSellReport(items=items)
 
 
 async def execute_auto_trading_cycle(
