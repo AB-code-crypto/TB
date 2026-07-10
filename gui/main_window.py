@@ -652,32 +652,6 @@ class MainWindow(QMainWindow):
         self.clear_selected_shares_button.clicked.connect(self.clear_selected_shares)
         self.update_robot_positions_button.clicked.connect(self.update_robot_positions_from_table)
 
-        share_filters_controls = QGroupBox(
-            "Фильтры акций Московской биржи"
-        )
-        share_filters_controls_layout = QGridLayout(
-            share_filters_controls
-        )
-        share_filters_controls_layout.addWidget(
-            self.only_liquid_shares_checkbox, 0, 0
-        )
-        share_filters_controls_layout.addWidget(
-            self.qualified_investor_checkbox, 0, 1
-        )
-
-        fixed_filters_hint_label = QLabel(
-            "Жёсткие фильтры: Московская биржа, валюта RUB, "
-            "доступность через API, покупка и продажа разрешены, "
-            "инструмент не заблокирован. Класс торгов не ограничивается."
-        )
-        fixed_filters_hint_label.setWordWrap(True)
-        share_filters_controls_layout.addWidget(
-            fixed_filters_hint_label, 1, 0, 1, 2
-        )
-        share_filters_controls_layout.addWidget(
-            self.shares_filters_label, 2, 0, 1, 2
-        )
-
         strategy_controls = QGroupBox("Настройки стратегии")
         strategy_layout = QGridLayout(strategy_controls)
 
@@ -725,18 +699,23 @@ class MainWindow(QMainWindow):
         strategy_options_widget = QWidget()
         strategy_options_layout = QHBoxLayout(strategy_options_widget)
         strategy_options_layout.setContentsMargins(0, 0, 0, 0)
-        strategy_options_layout.addWidget(self.allow_buy_checkbox)
-        strategy_options_layout.addWidget(self.allow_sell_checkbox)
 
-        self.auto_trading_enabled_checkbox.setText(
-            "Боевой режим: реальные рыночные заявки"
-        )
+        self.auto_trading_enabled_checkbox.setText("Боевой режим")
         self.auto_trading_enabled_checkbox.setStyleSheet(
             "font-weight: bold; color: #8a1f11;"
         )
-        strategy_options_layout.addWidget(
-            self.auto_trading_enabled_checkbox
+
+        strategy_option_checkboxes = (
+            self.auto_trading_enabled_checkbox,
+            self.qualified_investor_checkbox,
+            self.only_liquid_shares_checkbox,
+            self.allow_buy_checkbox,
+            self.allow_sell_checkbox,
         )
+
+        for checkbox in strategy_option_checkboxes:
+            strategy_options_layout.addWidget(checkbox)
+
         strategy_options_layout.addStretch(1)
         strategy_layout.addWidget(
             strategy_options_widget, 5, 0, 1, 6
@@ -940,7 +919,6 @@ class MainWindow(QMainWindow):
 
         root_layout.addWidget(status_controls)
         root_layout.addWidget(controls)
-        root_layout.addWidget(share_filters_controls)
         root_layout.addWidget(strategy_controls)
         root_layout.addWidget(manual_trading_controls)
         root_layout.addWidget(self.tabs)
