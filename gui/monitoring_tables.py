@@ -72,7 +72,6 @@ def fill_robot_orders_table(table: QTableWidget) -> None:
         "Сторона",
         "Статус",
         "Статус брокера",
-        "Тип",
         "Инструмент",
         "Название",
         "Лотов",
@@ -80,8 +79,6 @@ def fill_robot_orders_table(table: QTableWidget) -> None:
         "Исполнено",
         "Цена исполнения",
         "Сумма",
-        "order_request_id",
-        "broker_order_id",
         "Ошибка",
     ]
 
@@ -95,17 +92,24 @@ def fill_robot_orders_table(table: QTableWidget) -> None:
         _set_table_value(table, row_index, 2, order.side)
         _set_table_value(table, row_index, 3, order.status)
         _set_table_value(table, row_index, 4, order.execution_report_status)
-        _set_table_value(table, row_index, 5, order.order_type)
-        _set_table_value(table, row_index, 6, f"{order.ticker}_{order.class_code}")
-        _set_table_value(table, row_index, 7, order.name)
-        _set_table_value(table, row_index, 8, order.quantity_lots)
-        _set_table_value(table, row_index, 9, order.limit_price)
-        _set_table_value(table, row_index, 10, order.lots_executed)
-        _set_table_value(table, row_index, 11, order.executed_order_price)
-        _set_table_value(table, row_index, 12, order.total_order_amount)
-        _set_table_value(table, row_index, 13, order.order_request_id)
-        _set_table_value(table, row_index, 14, order.broker_order_id)
-        _set_table_value(table, row_index, 15, order.error_text)
+        _set_table_value(
+            table,
+            row_index,
+            5,
+            f"{order.ticker}_{order.class_code}",
+        )
+        _set_table_value(table, row_index, 6, order.name)
+        _set_table_value(table, row_index, 7, order.quantity_lots)
+        _set_table_value(table, row_index, 8, order.limit_price)
+        _set_table_value(table, row_index, 9, order.lots_executed)
+        _set_table_value(
+            table,
+            row_index,
+            10,
+            order.executed_order_price,
+        )
+        _set_table_value(table, row_index, 11, order.total_order_amount)
+        _set_table_value(table, row_index, 12, order.error_text)
 
     _fit_table_columns(table)
 
@@ -114,8 +118,9 @@ def fill_robot_positions_table(table: QTableWidget) -> None:
     positions = list_robot_positions()
 
     headers = [
+        "Инструмент",
         "Название",
-        "Средняя цена лота",
+        "Средняя цена",
         "Лотов у робота",
         "Лотов у брокера",
         "Внешних лотов клиента",
@@ -130,20 +135,52 @@ def fill_robot_positions_table(table: QTableWidget) -> None:
     table.setRowCount(len(positions))
 
     for row_index, position in enumerate(positions):
-        _set_table_value(table, row_index, 0, position.name)
-        _set_table_value(table, row_index, 1, position.avg_price)
-        _set_editable_table_value(table, row_index, 2, position.robot_lots)
-        _set_table_value(table, row_index, 3, position.last_broker_lots)
-        _set_table_value(table, row_index, 4, position.external_lots)
-        _set_table_value(table, row_index, 5, position.sync_note)
-        _set_table_value(table, row_index, 6, position.last_sync_at_utc)
-        _set_table_value(table, row_index, 7, position.account_id)
-        _set_table_value(table, row_index, 8, position.instrument_uid)
+        _set_table_value(
+            table,
+            row_index,
+            0,
+            f"{position.ticker}_{position.class_code}",
+        )
+        _set_table_value(table, row_index, 1, position.name)
+        _set_table_value(table, row_index, 2, position.avg_price)
+        _set_editable_table_value(
+            table,
+            row_index,
+            3,
+            position.robot_lots,
+        )
+        _set_table_value(
+            table,
+            row_index,
+            4,
+            position.last_broker_lots,
+        )
+        _set_table_value(
+            table,
+            row_index,
+            5,
+            position.external_lots,
+        )
+        _set_table_value(table, row_index, 6, position.sync_note)
+        _set_table_value(
+            table,
+            row_index,
+            7,
+            position.last_sync_at_utc,
+        )
+        _set_table_value(table, row_index, 8, position.account_id)
+        _set_table_value(
+            table,
+            row_index,
+            9,
+            position.instrument_uid,
+        )
 
-    table.setColumnHidden(7, True)
     table.setColumnHidden(8, True)
+    table.setColumnHidden(9, True)
 
     _fit_table_columns(table)
+
 
 def fill_growth_current_table(table: QTableWidget) -> None:
     states = list_growth_current_states(limit=500)
@@ -158,7 +195,6 @@ def fill_growth_current_table(table: QTableWidget) -> None:
         "Интервал",
         "Свеча UTC",
         "Цена UTC",
-        "Источник",
         "Цикл",
     ]
 
@@ -167,19 +203,44 @@ def fill_growth_current_table(table: QTableWidget) -> None:
     table.setRowCount(len(states))
 
     for row_index, state in enumerate(states):
-        _set_table_value(table, row_index, 0, f"{state.ticker}_{state.class_code}")
+        _set_table_value(
+            table,
+            row_index,
+            0,
+            f"{state.ticker}_{state.class_code}",
+        )
         _set_table_value(table, row_index, 1, state.name)
-        _set_table_value(table, row_index, 2, f"{state.growth_percent:.4f}%")
-        _set_table_value(table, row_index, 3, "ДА" if state.is_signal else "")
+        _set_table_value(
+            table,
+            row_index,
+            2,
+            f"{state.growth_percent:.4f}%",
+        )
+        _set_table_value(
+            table,
+            row_index,
+            3,
+            "ДА" if state.is_signal else "",
+        )
         _set_table_value(table, row_index, 4, state.current_price)
-        _set_table_value(table, row_index, 5, state.candle_open_price)
+        _set_table_value(
+            table,
+            row_index,
+            5,
+            state.candle_open_price,
+        )
         _set_table_value(table, row_index, 6, state.interval_label)
         _set_table_value(table, row_index, 7, state.candle_time_utc)
-        _set_table_value(table, row_index, 8, state.last_price_time_utc)
-        _set_table_value(table, row_index, 9, state.base_source)
-        _set_table_value(table, row_index, 10, state.scan_cycle_id)
+        _set_table_value(
+            table,
+            row_index,
+            8,
+            state.last_price_time_utc,
+        )
+        _set_table_value(table, row_index, 9, state.scan_cycle_id)
 
     _fit_table_columns(table)
+
 
 def fill_growth_signals_table(table: QTableWidget) -> None:
     signals = list_recent_growth_signals(limit=100)
@@ -188,7 +249,6 @@ def fill_growth_signals_table(table: QTableWidget) -> None:
         "ID",
         "Обнаружен UTC",
         "Инструмент",
-        "Интервал",
         "Свеча UTC",
         "Рост",
         "Порог",
@@ -203,15 +263,49 @@ def fill_growth_signals_table(table: QTableWidget) -> None:
 
     for row_index, signal in enumerate(signals):
         _set_table_value(table, row_index, 0, signal.id)
-        _set_table_value(table, row_index, 1, signal.detected_at_utc)
-        _set_table_value(table, row_index, 2, f"{signal.ticker}_{signal.class_code}")
-        _set_table_value(table, row_index, 3, signal.interval_label)
-        _set_table_value(table, row_index, 4, signal.candle_time_utc)
-        _set_table_value(table, row_index, 5, f"{signal.growth_percent:.4f}%")
-        _set_table_value(table, row_index, 6, f"{signal.threshold_percent:.4f}%")
-        _set_table_value(table, row_index, 7, signal.current_price)
-        _set_table_value(table, row_index, 8, signal.candle_open_price)
-        _set_table_value(table, row_index, 9, signal.status)
+        _set_table_value(
+            table,
+            row_index,
+            1,
+            signal.detected_at_utc,
+        )
+        _set_table_value(
+            table,
+            row_index,
+            2,
+            f"{signal.ticker}_{signal.class_code}",
+        )
+        _set_table_value(
+            table,
+            row_index,
+            3,
+            signal.candle_time_utc,
+        )
+        _set_table_value(
+            table,
+            row_index,
+            4,
+            f"{signal.growth_percent:.4f}%",
+        )
+        _set_table_value(
+            table,
+            row_index,
+            5,
+            f"{signal.threshold_percent:.4f}%",
+        )
+        _set_table_value(
+            table,
+            row_index,
+            6,
+            signal.current_price,
+        )
+        _set_table_value(
+            table,
+            row_index,
+            7,
+            signal.candle_open_price,
+        )
+        _set_table_value(table, row_index, 8, signal.status)
 
     _fit_table_columns(table)
 

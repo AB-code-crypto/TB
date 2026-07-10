@@ -315,8 +315,16 @@ class MainWindow(QMainWindow):
         self.growth_cycles_table = QTableWidget()
         self.monitoring_tabs = QTabWidget()
 
+        self.log_tab_widget = QWidget()
         self.log_edit = QPlainTextEdit()
         self.log_edit.setReadOnly(True)
+        self.clear_log_button = QPushButton("Очистить лог")
+        self.clear_log_button.setToolTip(
+            "Очистить только видимый лог. Данные БД не удаляются."
+        )
+        self.clear_log_button.clicked.connect(
+            self.clear_log_view
+        )
 
         self.async_task_finished.connect(self._handle_async_task_finished)
         self.async_task_failed.connect(self._handle_async_task_failed)
@@ -904,7 +912,15 @@ class MainWindow(QMainWindow):
         self.monitoring_tabs.addTab(self.growth_cycles_table, "Циклы сканирования")
         self.tabs.addTab(self.monitoring_tabs, "Мониторинг")
 
-        self.tabs.addTab(self.log_edit, "Лог")
+        log_tab_layout = QVBoxLayout(self.log_tab_widget)
+        log_actions_layout = QGridLayout()
+        log_actions_layout.addWidget(
+            self.clear_log_button, 0, 0
+        )
+        log_actions_layout.setColumnStretch(1, 1)
+        log_tab_layout.addLayout(log_actions_layout)
+        log_tab_layout.addWidget(self.log_edit)
+        self.tabs.addTab(self.log_tab_widget, "Лог")
 
         root_layout.addWidget(status_controls)
         root_layout.addWidget(controls)
@@ -3161,6 +3177,9 @@ class MainWindow(QMainWindow):
 
         QMessageBox.critical(self, f"Ошибка: {name}", error)
 
+    def clear_log_view(self) -> None:
+        self.log_edit.clear()
+
     def _log(self, message: str) -> None:
         now = datetime.now().strftime("%H:%M:%S")
         self.log_edit.appendPlainText(f"[{now}] {message}")
@@ -3283,14 +3302,16 @@ class MainWindow(QMainWindow):
         changed_count = 0
 
         for row in range(self.robot_positions_table.rowCount()):
-            name_item = self.robot_positions_table.item(row, 0)
-            robot_lots_item = self.robot_positions_table.item(row, 2)
-            broker_lots_item = self.robot_positions_table.item(row, 3)
-            account_id_item = self.robot_positions_table.item(row, 7)
-            instrument_uid_item = self.robot_positions_table.item(row, 8)
+            instrument_item = self.robot_positions_table.item(row, 0)
+            name_item = self.robot_positions_table.item(row, 1)
+            robot_lots_item = self.robot_positions_table.item(row, 3)
+            broker_lots_item = self.robot_positions_table.item(row, 4)
+            account_id_item = self.robot_positions_table.item(row, 8)
+            instrument_uid_item = self.robot_positions_table.item(row, 9)
 
             if (
-                name_item is None
+                instrument_item is None
+                or name_item is None
                 or robot_lots_item is None
                 or broker_lots_item is None
                 or account_id_item is None
@@ -3300,6 +3321,9 @@ class MainWindow(QMainWindow):
 
             raw_robot_lots = robot_lots_item.text().strip()
             raw_broker_lots = broker_lots_item.text().strip()
+            row_label = (
+                f"{instrument_item.text()} / {name_item.text()}"
+            )
 
             try:
                 robot_lots = int(raw_robot_lots)
@@ -3310,7 +3334,7 @@ class MainWindow(QMainWindow):
                     "Ошибка",
                     (
                         "Количество лотов у робота должно быть целым числом. "
-                        f"Строка: {name_item.text()}"
+                        f"Строка: {row_label}"
                     ),
                 )
                 return
@@ -3319,7 +3343,10 @@ class MainWindow(QMainWindow):
                 QMessageBox.warning(
                     self,
                     "Ошибка",
-                    f"Количество лотов у робота не может быть меньше 0. Строка: {name_item.text()}",
+                    (
+                        "Количество лотов у робота не может быть меньше 0. "
+                        f"Строка: {row_label}"
+                    ),
                 )
                 return
 
@@ -3329,7 +3356,8 @@ class MainWindow(QMainWindow):
                     "Ошибка",
                     (
                         "Лотов у робота не может быть больше, чем лотов у брокера. "
-                        f"Строка: {name_item.text()}, робот={robot_lots}, брокер={broker_lots}"
+                        f"Строка: {row_label}, "
+                        f"робот={robot_lots}, брокер={broker_lots}"
                     ),
                 )
                 return
@@ -3338,14 +3366,20 @@ class MainWindow(QMainWindow):
                 account_id=account_id_item.text(),
                 instrument_uid=instrument_uid_item.text(),
                 robot_lots=robot_lots,
-                reason="Ручная корректировка через таблицу Позиции робота.",
+                reason=(
+                    "Ручная корректировка через таблицу "
+                    "Позиции робота."
+                ),
             )
 
             if changed:
                 changed_count += 1
 
         self.refresh_robot_positions_table()
-        self._log(f"Лоты робота обновлены из таблицы. Изменено строк: {changed_count}")
+        self._log(
+            "Лоты робота обновлены из таблицы. "
+            f"Изменено строк: {changed_count}"
+        )
 
         if (
             self.pending_robot_start_settings is None
@@ -3367,7 +3401,9 @@ class MainWindow(QMainWindow):
             settings=settings,
             account=account,
         )
-        self.monitoring_tabs.setCurrentWidget(self.growth_current_table)
+        self.monitoring_tabs.setCurrentWidget(
+            self.growth_current_table
+        )
         self.tabs.setCurrentWidget(self.monitoring_tabs)
 
     def sync_robot_positions(self) -> None:
