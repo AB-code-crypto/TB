@@ -19,6 +19,7 @@ class RobotPosition:
     ticker: str
     class_code: str
     name: str
+    currency: str
     lot: int
     robot_lots: int
     robot_shares: int
@@ -48,6 +49,7 @@ def init_robot_position_storage() -> None:
                 ticker TEXT NOT NULL,
                 class_code TEXT NOT NULL,
                 name TEXT NOT NULL,
+                currency TEXT NOT NULL,
                 lot INTEGER NOT NULL,
                 robot_lots INTEGER NOT NULL,
                 robot_shares INTEGER NOT NULL,
@@ -122,6 +124,7 @@ def _position_row_to_dataclass(row) -> RobotPosition:
         ticker=row["ticker"],
         class_code=row["class_code"],
         name=row["name"],
+        currency=row["currency"],
         lot=row["lot"],
         robot_lots=row["robot_lots"],
         robot_shares=row["robot_shares"],
@@ -210,8 +213,7 @@ def list_robot_positions(account_id: str | None = None) -> list[RobotPosition]:
                 """
                 SELECT *
                 FROM robot_position
-                WHERE class_code = 'TQBR'
-                ORDER BY account_id, name, ticker
+                ORDER BY account_id, name, ticker, class_code
                 """
             ).fetchall()
         else:
@@ -220,8 +222,7 @@ def list_robot_positions(account_id: str | None = None) -> list[RobotPosition]:
                 SELECT *
                 FROM robot_position
                 WHERE account_id = ?
-                  AND class_code = 'TQBR'
-                ORDER BY name, ticker
+                ORDER BY name, ticker, class_code
                 """,
                 (account_id,),
             ).fetchall()
@@ -238,6 +239,7 @@ def update_robot_position_after_fill(
     ticker: str,
     class_code: str,
     name: str,
+    currency: str,
     lot: int,
     robot_lots: int,
     avg_price: Decimal,
@@ -252,6 +254,11 @@ def update_robot_position_after_fill(
 
     if not ticker.strip():
         raise ValueError("ticker не может быть пустым.")
+
+    clean_currency = currency.strip().upper()
+
+    if not clean_currency:
+        raise ValueError("currency не может быть пустой.")
 
     if lot <= 0:
         raise ValueError("lot должен быть больше 0.")
@@ -273,6 +280,7 @@ def update_robot_position_after_fill(
                 ticker,
                 class_code,
                 name,
+                currency,
                 lot,
                 robot_lots,
                 robot_shares,
@@ -283,11 +291,12 @@ def update_robot_position_after_fill(
                 last_sync_at_utc,
                 updated_at_utc
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, NULL, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, NULL, ?)
             ON CONFLICT(account_id, instrument_uid) DO UPDATE SET
                 ticker = excluded.ticker,
                 class_code = excluded.class_code,
                 name = excluded.name,
+                currency = excluded.currency,
                 lot = excluded.lot,
                 robot_lots = excluded.robot_lots,
                 robot_shares = excluded.robot_shares,
@@ -301,6 +310,7 @@ def update_robot_position_after_fill(
                 ticker,
                 class_code,
                 name,
+                clean_currency,
                 lot,
                 robot_lots,
                 robot_lots * lot,
@@ -314,19 +324,31 @@ def update_robot_position_after_fill(
 def _resolve_position_identity(
     position: RobotPosition,
     shares_by_uid: dict[str, TBankShare],
-) -> tuple[str, str, str, int]:
+) -> tuple[str, str, str, str, int]:
     share = shares_by_uid.get(position.instrument_uid)
 
     if share is None:
-        return position.ticker, position.class_code, position.name, position.lot
+        return (
+            position.ticker,
+            position.class_code,
+            position.name,
+            position.currency,
+            position.lot,
+        )
 
-    return share.ticker, share.class_code, share.name, share.lot
+    return (
+        share.ticker,
+        share.class_code,
+        share.name,
+        share.currency,
+        share.lot,
+    )
 
 
 def _resolve_broker_position_identity(
     position: TBankPortfolioPosition,
     shares_by_uid: dict[str, TBankShare],
-) -> tuple[str, str, str, int]:
+) -> tuple[str, str, str, str, int]:
     share = shares_by_uid.get(position.instrument_uid)
 
     if share is None:
@@ -334,10 +356,17 @@ def _resolve_broker_position_identity(
             position.ticker,
             position.class_code,
             position.ticker,
+            position.currency,
             _infer_lot_from_broker_position(position),
         )
 
-    return share.ticker, share.class_code, share.name, share.lot
+    return (
+        share.ticker,
+        share.class_code,
+        share.name,
+        share.currency,
+        share.lot,
+    )
 
 
 def set_robot_position_lots(
@@ -500,6 +529,7 @@ def apply_robot_order_fill(
             ticker=share.ticker,
             class_code=share.class_code,
             name=share.name,
+            currency=share.currency,
             lot=share.lot,
             robot_lots=new_robot_lots,
             avg_price=new_avg_price,
@@ -529,6 +559,7 @@ def apply_robot_order_fill(
             ticker=share.ticker,
             class_code=share.class_code,
             name=share.name,
+            currency=share.currency,
             lot=share.lot,
             robot_lots=new_robot_lots,
             avg_price=new_avg_price,
@@ -554,12 +585,15 @@ def sync_robot_positions_with_broker(
     shares_by_uid = {
         share.uid: share
         for share in shares
-        if share.class_code == "TQBR"
+    }
+    tracked_uids = set(shares_by_uid) | {
+        position.instrument_uid
+        for position in positions
     }
     broker_positions_by_uid = {
         position.instrument_uid: position
         for position in broker_positions
-        if position.class_code == "TQBR"
+        if position.instrument_uid in tracked_uids
     }
     broker_lots_by_uid = {
         position.instrument_uid: _decimal_lots_to_int(position.quantity_lots)
@@ -578,7 +612,7 @@ def sync_robot_positions_with_broker(
         for position in positions:
             broker_lots = broker_lots_by_uid.get(position.instrument_uid, 0)
             old_robot_lots = position.robot_lots
-            ticker, class_code, name, lot = _resolve_position_identity(
+            ticker, class_code, name, currency, lot = _resolve_position_identity(
                 position=position,
                 shares_by_uid=shares_by_uid,
             )
@@ -616,6 +650,7 @@ def sync_robot_positions_with_broker(
                     SET ticker = ?,
                         class_code = ?,
                         name = ?,
+                        currency = ?,
                         lot = ?,
                         robot_lots = ?,
                         robot_shares = ?,
@@ -631,6 +666,7 @@ def sync_robot_positions_with_broker(
                         ticker,
                         class_code,
                         name,
+                        currency,
                         lot,
                         new_robot_lots,
                         new_robot_lots * lot,
@@ -672,6 +708,7 @@ def sync_robot_positions_with_broker(
                 SET ticker = ?,
                     class_code = ?,
                     name = ?,
+                    currency = ?,
                     lot = ?,
                     last_broker_lots = ?,
                     external_lots = ?,
@@ -685,6 +722,7 @@ def sync_robot_positions_with_broker(
                     ticker,
                     class_code,
                     name,
+                    currency,
                     lot,
                     broker_lots,
                     external_lots,
@@ -706,10 +744,14 @@ def sync_robot_positions_with_broker(
             if broker_lots <= 0:
                 continue
 
-            ticker, class_code, name, lot = _resolve_broker_position_identity(
+            ticker, class_code, name, currency, lot = _resolve_broker_position_identity(
                 position=broker_position,
                 shares_by_uid=shares_by_uid,
             )
+
+            if lot <= 0:
+                continue
+
             sync_note = "Внешняя позиция клиента. Робот её не трогает."
 
             connection.execute(
@@ -720,6 +762,7 @@ def sync_robot_positions_with_broker(
                     ticker,
                     class_code,
                     name,
+                    currency,
                     lot,
                     robot_lots,
                     robot_shares,
@@ -730,7 +773,7 @@ def sync_robot_positions_with_broker(
                     last_sync_at_utc,
                     updated_at_utc
                 )
-                VALUES (?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     account_id,
@@ -738,6 +781,7 @@ def sync_robot_positions_with_broker(
                     ticker,
                     class_code,
                     name,
+                    currency,
                     lot,
                     str(broker_position.average_position_price),
                     broker_lots,

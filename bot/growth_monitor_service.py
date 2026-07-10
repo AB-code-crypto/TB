@@ -29,6 +29,8 @@ from bot.auto_trade_executor import execute_auto_trading_cycle
 LogCallback = Callable[[str], None]
 StopCallback = Callable[[], bool]
 
+TRADE_CURRENCIES = ("RUB", "USD", "EUR")
+
 
 def _parse_positive_decimal_setting(
     settings: dict[str, str],
@@ -112,30 +114,43 @@ def save_report_signals(
 def save_dry_run_buy_intents(
     new_signal_records: list[tuple[int, GrowthScanResult]],
     report: GrowthScanReport,
-) -> tuple[int, int, Decimal]:
+) -> tuple[int, int, dict[str, Decimal]]:
+    empty_amounts = {
+        currency: Decimal("0")
+        for currency in TRADE_CURRENCIES
+    }
+
     if not new_signal_records:
-        return 0, 0, Decimal("0")
+        return 0, 0, empty_amounts
 
     settings = load_app_settings()
 
     allow_buy = settings["allow_buy"] == "1"
-    requested_amount = _parse_positive_decimal_setting(
-        settings=settings,
-        key="auto_buy_amount",
-        label="Сумма автопокупки",
-    )
-    bot_money_limit = _parse_positive_decimal_setting(
-        settings=settings,
-        key="bot_money_limit",
-        label="Лимит денег для бота",
-    )
+    requested_amounts_by_currency = {
+        currency: _parse_positive_decimal_setting(
+            settings=settings,
+            key=f"auto_buy_amount_{currency.lower()}",
+            label=f"Сумма автопокупки {currency}",
+        )
+        for currency in TRADE_CURRENCIES
+    }
+    remaining_limits_by_currency = {
+        currency: _parse_positive_decimal_setting(
+            settings=settings,
+            key=f"bot_money_limit_{currency.lower()}",
+            label=f"Лимит денег для бота {currency}",
+        )
+        for currency in TRADE_CURRENCIES
+    }
 
     created_at_utc = datetime.now(timezone.utc)
-    remaining_bot_limit = bot_money_limit
 
     planned_count = 0
     skipped_count = 0
-    planned_amount = Decimal("0")
+    planned_amounts = {
+        currency: Decimal("0")
+        for currency in TRADE_CURRENCIES
+    }
 
     for signal_id, signal in new_signal_records:
         status = BUY_INTENT_STATUS_SKIPPED
@@ -143,11 +158,16 @@ def save_dry_run_buy_intents(
         quantity_lots = 0
         quantity_shares = 0
         estimated_order_amount = Decimal("0")
+        currency = signal.currency.upper()
+        requested_amount = requested_amounts_by_currency.get(
+            currency,
+            Decimal("0"),
+        )
 
         if not allow_buy:
             reason = "Покупки запрещены настройкой allow_buy."
-        elif signal.currency != "RUB":
-            reason = f"Валюта инструмента не RUB: {signal.currency}."
+        elif currency not in requested_amounts_by_currency:
+            reason = f"Валюта инструмента не поддерживается: {currency}."
         else:
             one_lot_amount = signal.current_price * Decimal(signal.lot)
 
@@ -159,20 +179,28 @@ def save_dry_run_buy_intents(
                 if quantity_lots <= 0:
                     reason = (
                         "Сумма одной покупки меньше стоимости одного лота: "
-                        f"amount={requested_amount}, one_lot={one_lot_amount}."
+                        f"amount={requested_amount} {currency}, "
+                        f"one_lot={one_lot_amount} {currency}."
                     )
                 else:
                     quantity_shares = quantity_lots * signal.lot
-                    estimated_order_amount = signal.current_price * Decimal(quantity_shares)
+                    estimated_order_amount = (
+                        signal.current_price * Decimal(quantity_shares)
+                    )
+                    remaining_limit = remaining_limits_by_currency[currency]
 
-                    if estimated_order_amount > remaining_bot_limit:
+                    if estimated_order_amount > remaining_limit:
                         reason = (
                             "Недостаточно лимита денег бота в текущем цикле: "
-                            f"need={estimated_order_amount}, remaining={remaining_bot_limit}."
+                            f"need={estimated_order_amount} {currency}, "
+                            f"remaining={remaining_limit} {currency}."
                         )
                     else:
                         status = BUY_INTENT_STATUS_PLANNED
-                        reason = "Dry-run: покупка рассчитана, заявка брокеру не отправлена."
+                        reason = (
+                            "Dry-run: покупка рассчитана, "
+                            "заявка брокеру не отправлена."
+                        )
 
         intent_id = save_buy_intent(
             created_at_utc=created_at_utc,
@@ -192,7 +220,7 @@ def save_dry_run_buy_intents(
             quantity_lots=quantity_lots,
             quantity_shares=quantity_shares,
             estimated_order_amount=estimated_order_amount,
-            currency=signal.currency,
+            currency=currency,
             is_dry_run=True,
         )
 
@@ -201,30 +229,37 @@ def save_dry_run_buy_intents(
 
         if status == BUY_INTENT_STATUS_PLANNED:
             planned_count += 1
-            planned_amount += estimated_order_amount
-            remaining_bot_limit -= estimated_order_amount
+            planned_amounts[currency] += estimated_order_amount
+            remaining_limits_by_currency[currency] -= estimated_order_amount
         elif status == BUY_INTENT_STATUS_SKIPPED:
             skipped_count += 1
         else:
             raise RuntimeError(f"Неизвестный статус buy_intent: {status}")
 
-    return planned_count, skipped_count, planned_amount
+    return planned_count, skipped_count, planned_amounts
 
 
 def build_buy_intent_log_lines(
     planned_count: int,
     skipped_count: int,
-    planned_amount: Decimal,
+    planned_amounts: dict[str, Decimal],
 ) -> list[str]:
     if planned_count == 0 and skipped_count == 0:
         return []
+
+    amount_parts = [
+        f"{currency}={amount:.2f}"
+        for currency, amount in planned_amounts.items()
+        if amount != 0
+    ]
+    amounts_text = ", ".join(amount_parts) if amount_parts else "нет"
 
     return [
         (
             "Dry-run автопокупок: "
             f"планов={planned_count}, "
             f"пропущено={skipped_count}, "
-            f"плановая сумма={planned_amount:.2f} ₽."
+            f"плановые суммы: {amounts_text}."
         ),
         "Реальные заявки брокеру не отправлялись.",
     ]
@@ -435,7 +470,7 @@ async def run_growth_monitor_service(
                 trade_log_lines = build_buy_intent_log_lines(
                     planned_count=planned_buy_intents_count,
                     skipped_count=skipped_buy_intents_count,
-                    planned_amount=planned_buy_intents_amount,
+                    planned_amounts=planned_buy_intents_amount,
                 )
         except Exception as error:
             cycle_finished_at = datetime.now(timezone.utc)

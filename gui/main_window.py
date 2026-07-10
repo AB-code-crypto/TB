@@ -163,6 +163,10 @@ class MainWindow(QMainWindow):
         self.stop_loss_percent_edit = QLineEdit("1.00")
         self.bot_money_limit_edit = QLineEdit("10000.00")
         self.auto_buy_amount_edit = QLineEdit("500.00")
+        self.bot_money_limit_usd_edit = QLineEdit("1000.00")
+        self.auto_buy_amount_usd_edit = QLineEdit("100.00")
+        self.bot_money_limit_eur_edit = QLineEdit("1000.00")
+        self.auto_buy_amount_eur_edit = QLineEdit("100.00")
 
         self.robot_status_label = QLabel("Робот: выключен")
         self.robot_mode_summary_label = QLabel("Режим: Тестирование")
@@ -418,7 +422,7 @@ class MainWindow(QMainWindow):
         strategy_layout.addWidget(QLabel("Купить при росте, %:"), 0, 0)
         strategy_layout.addWidget(self.growth_percent_edit, 0, 1)
 
-        strategy_layout.addWidget(QLabel("Лимит денег для бота, ₽:"), 0, 2)
+        strategy_layout.addWidget(QLabel("Лимит денег RUB:"), 0, 2)
         strategy_layout.addWidget(self.bot_money_limit_edit, 0, 3)
 
         strategy_layout.addWidget(QLabel("Интервал расчёта роста:"), 0, 4)
@@ -427,7 +431,7 @@ class MainWindow(QMainWindow):
         strategy_layout.addWidget(QLabel("Продать при прибыли, %:"), 1, 0)
         strategy_layout.addWidget(self.take_profit_percent_edit, 1, 1)
 
-        strategy_layout.addWidget(QLabel("Сумма автопокупки, ₽:"), 1, 2)
+        strategy_layout.addWidget(QLabel("Сумма автопокупки RUB:"), 1, 2)
         strategy_layout.addWidget(self.auto_buy_amount_edit, 1, 3)
 
         strategy_layout.addWidget(QLabel("Интервал проверки, сек:"), 1, 4)
@@ -448,9 +452,19 @@ class MainWindow(QMainWindow):
         )
         strategy_layout.addWidget(self.database_maintenance_button, 2, 4, 1, 2)
 
-        strategy_layout.addWidget(QLabel("Разрешения:"), 3, 0)
-        strategy_layout.addWidget(self.allow_buy_checkbox, 3, 1)
-        strategy_layout.addWidget(self.allow_sell_checkbox, 3, 2)
+        strategy_layout.addWidget(QLabel("Лимит денег USD:"), 3, 0)
+        strategy_layout.addWidget(self.bot_money_limit_usd_edit, 3, 1)
+        strategy_layout.addWidget(QLabel("Сумма автопокупки USD:"), 3, 2)
+        strategy_layout.addWidget(self.auto_buy_amount_usd_edit, 3, 3)
+
+        strategy_layout.addWidget(QLabel("Лимит денег EUR:"), 4, 0)
+        strategy_layout.addWidget(self.bot_money_limit_eur_edit, 4, 1)
+        strategy_layout.addWidget(QLabel("Сумма автопокупки EUR:"), 4, 2)
+        strategy_layout.addWidget(self.auto_buy_amount_eur_edit, 4, 3)
+
+        strategy_layout.addWidget(QLabel("Разрешения:"), 5, 0)
+        strategy_layout.addWidget(self.allow_buy_checkbox, 5, 1)
+        strategy_layout.addWidget(self.allow_sell_checkbox, 5, 2)
 
         self.robot_toggle_button = QPushButton("Включить и синхронизировать")
         self.robot_toggle_button.setCheckable(True)
@@ -463,9 +477,9 @@ class MainWindow(QMainWindow):
         self.reset_state_button = QPushButton("Сбросить настройки")
         self.reset_state_button.clicked.connect(self.reset_current_state)
 
-        strategy_layout.addWidget(self.robot_toggle_button, 4, 0, 1, 2)
-        strategy_layout.addWidget(self.save_state_button, 4, 2, 1, 2)
-        strategy_layout.addWidget(self.reset_state_button, 4, 4, 1, 2)
+        strategy_layout.addWidget(self.robot_toggle_button, 6, 0, 1, 2)
+        strategy_layout.addWidget(self.save_state_button, 6, 2, 1, 2)
+        strategy_layout.addWidget(self.reset_state_button, 6, 4, 1, 2)
 
         trading_mode_controls = QGroupBox("Режим торговли")
         trading_mode_layout = QGridLayout(trading_mode_controls)
@@ -543,7 +557,9 @@ class MainWindow(QMainWindow):
         manual_trading_controls_layout.addWidget(self.manual_instrument_id_edit, 0, 1, 1, 2)
         manual_trading_controls_layout.addWidget(self.manual_mode_checkbox, 0, 3)
 
-        manual_trading_controls_layout.addWidget(QLabel("Сумма ручной покупки, ₽:"), 1, 0)
+        manual_trading_controls_layout.addWidget(
+            QLabel("Сумма ручной покупки (валюта инструмента):"), 1, 0
+        )
         manual_trading_controls_layout.addWidget(self.manual_buy_amount_edit, 1, 1)
 
         manual_trading_controls_layout.addWidget(QLabel("Объём продажи, лоты:"), 1, 2)
@@ -659,11 +675,23 @@ class MainWindow(QMainWindow):
         if "stop_loss_percent" in settings:
             self.stop_loss_percent_edit.setText(settings["stop_loss_percent"])
 
-        if "bot_money_limit" in settings:
-            self.bot_money_limit_edit.setText(settings["bot_money_limit"])
+        if "bot_money_limit_rub" in settings:
+            self.bot_money_limit_edit.setText(settings["bot_money_limit_rub"])
 
-        if "auto_buy_amount" in settings:
-            self.auto_buy_amount_edit.setText(settings["auto_buy_amount"])
+        if "auto_buy_amount_rub" in settings:
+            self.auto_buy_amount_edit.setText(settings["auto_buy_amount_rub"])
+
+        if "bot_money_limit_usd" in settings:
+            self.bot_money_limit_usd_edit.setText(settings["bot_money_limit_usd"])
+
+        if "auto_buy_amount_usd" in settings:
+            self.auto_buy_amount_usd_edit.setText(settings["auto_buy_amount_usd"])
+
+        if "bot_money_limit_eur" in settings:
+            self.bot_money_limit_eur_edit.setText(settings["bot_money_limit_eur"])
+
+        if "auto_buy_amount_eur" in settings:
+            self.auto_buy_amount_eur_edit.setText(settings["auto_buy_amount_eur"])
 
         if "manual_instrument_id" in settings:
             self.manual_instrument_id_edit.setText(settings["manual_instrument_id"])
@@ -711,8 +739,12 @@ class MainWindow(QMainWindow):
             "max_price_age_seconds": self.max_price_age_seconds_edit.text().strip(),
             "take_profit_percent": self.take_profit_percent_edit.text().strip(),
             "stop_loss_percent": self.stop_loss_percent_edit.text().strip(),
-            "bot_money_limit": self.bot_money_limit_edit.text().strip(),
-            "auto_buy_amount": self.auto_buy_amount_edit.text().strip(),
+            "bot_money_limit_rub": self.bot_money_limit_edit.text().strip(),
+            "auto_buy_amount_rub": self.auto_buy_amount_edit.text().strip(),
+            "bot_money_limit_usd": self.bot_money_limit_usd_edit.text().strip(),
+            "auto_buy_amount_usd": self.auto_buy_amount_usd_edit.text().strip(),
+            "bot_money_limit_eur": self.bot_money_limit_eur_edit.text().strip(),
+            "auto_buy_amount_eur": self.auto_buy_amount_eur_edit.text().strip(),
             "manual_mode": "0",
             "auto_trading_enabled": "1" if self.auto_trading_enabled_checkbox.isChecked() else "0",
             "allow_buy": "1" if self.allow_buy_checkbox.isChecked() else "0",
@@ -768,6 +800,10 @@ class MainWindow(QMainWindow):
         self.stop_loss_percent_edit.setText("1.00")
         self.bot_money_limit_edit.setText("10000.00")
         self.auto_buy_amount_edit.setText("500.00")
+        self.bot_money_limit_usd_edit.setText("1000.00")
+        self.auto_buy_amount_usd_edit.setText("100.00")
+        self.bot_money_limit_eur_edit.setText("1000.00")
+        self.auto_buy_amount_eur_edit.setText("100.00")
 
         self.manual_instrument_id_edit.setText("SBER_TQBR")
         self.manual_buy_amount_edit.setText("10000.00")
@@ -864,7 +900,6 @@ class MainWindow(QMainWindow):
             self.growth_percent_edit,
             "Купить при росте, %",
         )
-
         growth_candle_interval = self.growth_candle_interval_combo.currentText()
 
         if growth_candle_interval not in GROWTH_CANDLE_INTERVALS:
@@ -877,7 +912,9 @@ class MainWindow(QMainWindow):
         try:
             scan_interval_seconds = int(scan_interval_raw)
         except ValueError as error:
-            raise ValueError("Интервал проверки должен быть целым числом секунд.") from error
+            raise ValueError(
+                "Интервал проверки должен быть целым числом секунд."
+            ) from error
 
         if scan_interval_seconds <= 0:
             raise ValueError("Интервал проверки должен быть больше 0.")
@@ -887,7 +924,9 @@ class MainWindow(QMainWindow):
         try:
             max_price_age_seconds = int(max_price_age_seconds_raw)
         except ValueError as error:
-            raise ValueError("Максимальный возраст цены должен быть целым числом секунд.") from error
+            raise ValueError(
+                "Максимальный возраст цены должен быть целым числом секунд."
+            ) from error
 
         if max_price_age_seconds <= 0:
             raise ValueError("Максимальный возраст цены должен быть больше 0.")
@@ -900,40 +939,63 @@ class MainWindow(QMainWindow):
             self.stop_loss_percent_edit,
             "Продать при убытке, %",
         )
-        bot_money_limit = self._parse_decimal_field(
+        bot_money_limit_rub = self._parse_decimal_field(
             self.bot_money_limit_edit,
-            "Лимит денег для бота",
+            "Лимит денег для бота RUB",
         )
-        auto_buy_amount = self._parse_decimal_field(
+        auto_buy_amount_rub = self._parse_decimal_field(
             self.auto_buy_amount_edit,
-            "Сумма автопокупки, ₽",
+            "Сумма автопокупки RUB",
+        )
+        bot_money_limit_usd = self._parse_decimal_field(
+            self.bot_money_limit_usd_edit,
+            "Лимит денег для бота USD",
+        )
+        auto_buy_amount_usd = self._parse_decimal_field(
+            self.auto_buy_amount_usd_edit,
+            "Сумма автопокупки USD",
+        )
+        bot_money_limit_eur = self._parse_decimal_field(
+            self.bot_money_limit_eur_edit,
+            "Лимит денег для бота EUR",
+        )
+        auto_buy_amount_eur = self._parse_decimal_field(
+            self.auto_buy_amount_eur_edit,
+            "Сумма автопокупки EUR",
         )
 
-        if growth_percent <= 0:
-            raise ValueError("Рост для покупки должен быть больше 0.")
+        positive_values = {
+            "Рост для покупки": growth_percent,
+            "Процент прибыли": take_profit_percent,
+            "Процент убытка": stop_loss_percent,
+            "Лимит RUB": bot_money_limit_rub,
+            "Автопокупка RUB": auto_buy_amount_rub,
+            "Лимит USD": bot_money_limit_usd,
+            "Автопокупка USD": auto_buy_amount_usd,
+            "Лимит EUR": bot_money_limit_eur,
+            "Автопокупка EUR": auto_buy_amount_eur,
+        }
 
-        if take_profit_percent <= 0:
-            raise ValueError("Процент прибыли должен быть больше 0.")
-
-        if stop_loss_percent <= 0:
-            raise ValueError("Процент убытка должен быть больше 0.")
-
-        if bot_money_limit <= 0:
-            raise ValueError("Лимит денег для бота должен быть больше 0.")
-
-        if auto_buy_amount <= 0:
-            raise ValueError("Сумма автопокупки должна быть больше 0.")
+        for label, value in positive_values.items():
+            if value <= 0:
+                raise ValueError(f"{label} должен быть больше 0.")
 
         return {
             "growth_percent": growth_percent,
             "growth_candle_interval": growth_candle_interval,
-            "growth_candle_interval_value": GROWTH_CANDLE_INTERVALS[growth_candle_interval],
+            "growth_candle_interval_value": GROWTH_CANDLE_INTERVALS[
+                growth_candle_interval
+            ],
             "scan_interval_seconds": scan_interval_seconds,
             "max_price_age_seconds": max_price_age_seconds,
             "take_profit_percent": take_profit_percent,
             "stop_loss_percent": stop_loss_percent,
-            "bot_money_limit": bot_money_limit,
-            "auto_buy_amount": auto_buy_amount,
+            "bot_money_limit_rub": bot_money_limit_rub,
+            "auto_buy_amount_rub": auto_buy_amount_rub,
+            "bot_money_limit_usd": bot_money_limit_usd,
+            "auto_buy_amount_usd": auto_buy_amount_usd,
+            "bot_money_limit_eur": bot_money_limit_eur,
+            "auto_buy_amount_eur": auto_buy_amount_eur,
             "auto_trading_enabled": self.auto_trading_enabled_checkbox.isChecked(),
         }
 
@@ -954,6 +1016,10 @@ class MainWindow(QMainWindow):
             self.stop_loss_percent_edit,
             self.bot_money_limit_edit,
             self.auto_buy_amount_edit,
+            self.bot_money_limit_usd_edit,
+            self.auto_buy_amount_usd_edit,
+            self.bot_money_limit_eur_edit,
+            self.auto_buy_amount_eur_edit,
             self.manual_mode_checkbox,
             self.auto_trading_enabled_checkbox,
             self.allow_buy_checkbox,
@@ -1224,9 +1290,17 @@ class MainWindow(QMainWindow):
         self._log(f"Интервал проверки: {settings['scan_interval_seconds']} сек.")
         self._log(f"Макс. возраст цены: {settings['max_price_age_seconds']} сек.")
         self._log(
-            f"Хранение снимков цен: {settings['price_snapshot_retention_days']} дней."
+            "Лимиты бота: "
+            f"RUB={settings['bot_money_limit_rub']}, "
+            f"USD={settings['bot_money_limit_usd']}, "
+            f"EUR={settings['bot_money_limit_eur']}."
         )
-        self._log(f"Сумма автопокупки: {settings['auto_buy_amount']} ₽")
+        self._log(
+            "Суммы автопокупки: "
+            f"RUB={settings['auto_buy_amount_rub']}, "
+            f"USD={settings['auto_buy_amount_usd']}, "
+            f"EUR={settings['auto_buy_amount_eur']}."
+        )
         if settings["auto_trading_enabled"]:
             self._log(
                 "Реальная автоторговля включена: входы и выходы выполняются "
@@ -1560,14 +1634,10 @@ class MainWindow(QMainWindow):
         client_is_qualified: bool,
         side: str | None = None,
     ) -> None:
-        if share.currency != "RUB":
-            raise ValueError("Для ручной торговли пока доступны только RUB-акции.")
-
-        if share.real_exchange != "REAL_EXCHANGE_MOEX":
-            raise ValueError("Для ручной торговли пока доступны только акции MOEX.")
-
-        if share.class_code != "TQBR":
-            raise ValueError("Для ручной торговли пока доступны только акции класса TQBR.")
+        if share.currency.upper() not in {"RUB", "USD", "EUR"}:
+            raise ValueError(
+                f"Валюта акции пока не поддерживается: {share.currency}."
+            )
 
         if not share.api_trade_available_flag:
             raise ValueError("По инструменту недоступна торговля через API.")
@@ -1576,7 +1646,9 @@ class MainWindow(QMainWindow):
             raise ValueError("Инструмент заблокирован для торговли.")
 
         if share.for_qual_investor_flag and not client_is_qualified:
-            raise ValueError("Инструмент доступен только квалифицированному инвестору.")
+            raise ValueError(
+                "Инструмент доступен только квалифицированному инвестору."
+            )
 
         if side == "BUY" and not share.buy_available_flag:
             raise ValueError("Покупка по этому инструменту недоступна.")
@@ -1609,9 +1681,15 @@ class MainWindow(QMainWindow):
 
         return share
 
-    def _get_available_rub(self, balance: PortfolioBalance) -> Decimal:
+    def _get_available_money(
+        self,
+        balance: PortfolioBalance,
+        currency: str,
+    ) -> Decimal:
+        clean_currency = currency.strip().upper()
+
         for money in balance.money:
-            if money.currency == "RUB":
+            if money.currency.upper() == clean_currency:
                 return money.available
 
         return Decimal("0")
@@ -1735,7 +1813,7 @@ class MainWindow(QMainWindow):
             sep=" ",
             timespec="seconds",
         )
-        text = f"{last_price.price} ₽ | {price_time} UTC"
+        text = f"{last_price.price} {share.currency} | {price_time} UTC"
 
         self.manual_last_price_label.setText(text)
         self._log(f"Последняя цена получена: {text}")
@@ -1804,7 +1882,7 @@ class MainWindow(QMainWindow):
             if side == "BUY":
                 buy_amount = self._parse_decimal_field(
                     self.manual_buy_amount_edit,
-                    "Сумма ручной покупки, ₽",
+                    "Сумма ручной покупки",
                 )
 
                 if buy_amount <= 0:
@@ -1879,17 +1957,21 @@ class MainWindow(QMainWindow):
                     if quantity_lots <= 0:
                         raise ValueError(
                             "Суммы ручной покупки не хватает даже на 1 лот: "
-                            f"лот стоит примерно {one_lot_amount:.2f} ₽."
+                            f"лот стоит примерно {one_lot_amount:.2f} {share.currency}."
                         )
 
                     requested_amount = one_lot_amount * Decimal(quantity_lots)
                     balance = await get_balance(client, account_id)
-                    available_rub = self._get_available_rub(balance)
+                    available_money = self._get_available_money(
+                        balance=balance,
+                        currency=share.currency,
+                    )
 
-                    if requested_amount > available_rub:
+                    if requested_amount > available_money:
                         raise ValueError(
-                            "Недостаточно свободных рублей для покупки: "
-                            f"нужно {requested_amount:.2f} ₽, доступно {available_rub:.2f} ₽."
+                            "Недостаточно свободных денег для покупки: "
+                            f"нужно {requested_amount:.2f} {share.currency}, "
+                            f"доступно {available_money:.2f} {share.currency}."
                         )
                 else:
                     quantity_lots = sell_lots
@@ -1965,7 +2047,7 @@ class MainWindow(QMainWindow):
         type_text = "лимитная" if order_type == "LIMIT" else "рыночная"
 
         if side == "BUY":
-            size_text = f"Сумма: {buy_amount} ₽"
+            size_text = f"Сумма: {buy_amount} {share.currency}"
         else:
             size_text = f"Лотов: {sell_lots}"
 
